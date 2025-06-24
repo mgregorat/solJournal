@@ -1,0 +1,28 @@
+# Dependencies
+/node_modules
+/my-app/node_modules
+
+# Local Environment Variables
+.env.local
+*.env.local
+!TRADELOG/.env.local.example
+
+# Next.js
+/my-app/.next/
+/my-app/out/
+
+# Tradelo
+/tradelog/node_modules
+/tradelog/.next/
+/tradelog/out/
+.DS_Store
+*.pem
+*.p12
+*.pfx
+*.key
+*.cer
+*.crt
+
+# Embedded repository
+/tradelog/
+/my-app/ 
