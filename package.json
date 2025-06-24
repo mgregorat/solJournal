@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "@jup-ag/wallet-adapter": "^0.2.3",
+    "@radix-ui/react-dialog": "^1.1.14",
+    "@solana/spl-token": "^0.4.13",
+    "@solana/wallet-adapter-base": "^0.9.27",
+    "@solana/wallet-adapter-wallets": "^0.19.37",
+    "@solana/web3.js": "^1.98.2",
+    "@types/recharts": "^1.8.29",
+    "decimal.js": "^10.5.0",
+    "recharts": "^2.15.4"
+  }
+}
