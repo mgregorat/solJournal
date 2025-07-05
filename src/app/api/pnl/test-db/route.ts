@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
 
     // Check if P&L tables exist
     const tables = ['daily_snapshots', 'transaction_classifications', 'portfolio_holdings_history'];
-    const tableStatus = {};
+    const tableStatus: { [key: string]: any } = {};
 
     for (const table of tables) {
       try {
