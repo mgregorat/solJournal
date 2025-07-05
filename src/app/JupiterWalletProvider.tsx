@@ -1,6 +1,6 @@
 'use client';
 
-import { UnifiedWalletProvider } from '@jup-ag/wallet-adapter';
+import { IUnifiedWalletConfig, UnifiedWalletProvider } from '@jup-ag/wallet-adapter';
 import { FC, ReactNode } from 'react';
 import {
   CoinbaseWalletAdapter,
@@ -38,7 +38,7 @@ export const JupiterWalletProvider: FC<JupiterWalletProviderProps> = ({ children
     theme: 'dark',
     lang: 'en',
     rpcEndpoint: `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`,
-  };
+  } as IUnifiedWalletConfig;
 
   return (
     <UnifiedWalletProvider wallets={wallets} config={config}>
