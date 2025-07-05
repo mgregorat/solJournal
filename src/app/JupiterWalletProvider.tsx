@@ -1,6 +1,6 @@
 'use client';
 
-import { IUnifiedWalletConfig, UnifiedWalletProvider } from '@jup-ag/wallet-adapter';
+import { UnifiedWalletProvider } from '@jup-ag/wallet-adapter';
 import { FC, ReactNode } from 'react';
 import {
   CoinbaseWalletAdapter,
@@ -22,7 +22,7 @@ export const JupiterWalletProvider: FC<JupiterWalletProviderProps> = ({ children
     new TrustWalletAdapter(),
   ];
 
-  const config: IUnifiedWalletConfig = {
+  const config = {
     autoConnect: true,
     env: 'mainnet-beta',
     metadata: {
