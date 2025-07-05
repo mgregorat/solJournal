@@ -41,6 +41,7 @@ export const JupiterWalletProvider: FC<JupiterWalletProviderProps> = ({ children
   };
 
   return (
+    // @ts-ignore
     <UnifiedWalletProvider wallets={wallets} config={config}>
       {children}
     </UnifiedWalletProvider>
