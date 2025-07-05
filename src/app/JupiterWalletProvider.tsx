@@ -1,8 +1,7 @@
 'use client';
 
-import { UnifiedWalletProvider, IUnifiedWalletConfig } from '@jup-ag/wallet-adapter';
+import { UnifiedWalletProvider } from '@jup-ag/wallet-adapter';
 import { FC, ReactNode } from 'react';
-import { Cluster } from '@solana/web3.js';
 import {
   CoinbaseWalletAdapter,
   PhantomWalletAdapter,
@@ -23,9 +22,9 @@ export const JupiterWalletProvider: FC<JupiterWalletProviderProps> = ({ children
     new TrustWalletAdapter(),
   ];
 
-  const config: IUnifiedWalletConfig = {
+  const config = {
     autoConnect: true,
-    env: 'mainnet-beta' as Cluster,
+    env: 'mainnet-beta',
     metadata: {
       name: 'Tradelog',
       description: 'Log your Solana trades.',
