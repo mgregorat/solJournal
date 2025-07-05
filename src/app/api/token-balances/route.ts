@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        const response = await helius.rpc.getTokenBalances({ owner: walletAddress });
+        const response = await helius.rpc.getAssetsByOwner({ ownerAddress: walletAddress, page: 1 });
         return NextResponse.json(response);
 
     } catch (error: any) {
