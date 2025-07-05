@@ -1,26 +1,102 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 142.1 76.2% 36.3%;
+    --primary-foreground: 142.1 76.2% 16.3%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 142.1 76.2% 36.3%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 220 13% 9%;
+    --foreground: 210 20% 98%;
+
+    --card: 220 13% 9%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 220 13% 9%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 142.1 70.6% 45.3%;
+    --primary-foreground: 142.1 70.6% 15.3%;
+
+    --secondary: 220 13% 15%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 220 13% 15%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+
+    --accent: 220 13% 15%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 20% 98%;
+
+    --border: 220 13% 18%;
+    --input: 220 13% 18%;
+    --ring: 142.1 70.6% 45.3%;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom styles for wallet adapter to match the new theme */
+.wallet-adapter-button {
+  @apply bg-green-500 hover:bg-green-600 text-black font-semibold !important;
+}
+
+.wallet-adapter-modal-wrapper {
+  background-color: rgba(17, 19, 21, 0.8) !important;
+  backdrop-filter: blur(4px);
+}
+
+.wallet-adapter-modal-container {
+  @apply bg-[#1C1F23] border border-gray-700 rounded-lg !important;
+}
+
+.wallet-adapter-modal-title {
+  @apply text-white !important;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button {
+  @apply bg-gray-800/50 hover:bg-gray-700/50 text-white !important;
+}
+
+.wallet-adapter-modal-list .wallet-adapter-button:not([disabled]):hover {
+  background-color: #374151 !important; /* A slightly lighter gray on hover */
 }
