@@ -1,21 +1,37 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
-import puppeteer from 'puppeteer';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  throw new Error('Supabase URL and Service Key are required. Check your .env.local file.');
+}
+
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
+
 
 async function fetchTokenDetails(mintAddress: string) {
-    // This is the core logic from the watchlist-token-details route
-    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
-    const page = await browser.newPage();
     try {
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         const dexScreenerUrl = `https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`;
-        const data = await page.evaluate(async (url) => {
-            const response = await fetch(url);
-            if (!response.ok) return null;
-            return await response.json();
-        }, dexScreenerUrl);
+        const response = await fetch(dexScreenerUrl);
 
-        if (!data || !data.pairs || data.pairs.length === 0) return null;
+        if (!response.ok) {
+            console.error(`DexScreener API request failed for ${mintAddress} with status: ${response.status}`);
+            return null;
+        }
+
+        const data = await response.json();
+
+        if (!data || !data.pairs || data.pairs.length === 0) {
+            console.warn(`No pair data found for ${mintAddress}`);
+            return null;
+        }
 
         const pair = data.pairs[0];
         if (!pair || !pair.baseToken) return null;
@@ -49,8 +65,6 @@ async function fetchTokenDetails(mintAddress: string) {
     } catch (error) {
         console.error(`Error fetching details for ${mintAddress}:`, error);
         return null;
-    } finally {
-        await browser.close();
     }
 }
 
