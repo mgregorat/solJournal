@@ -16,6 +16,12 @@ const COLORS = [
   '#FF4560', '#775DD0', '#546E7A', '#26a69a', '#D10CE8'
 ];
 
+interface ChartData {
+  name: string;
+  value: number;
+  percent: number;
+}
+
 const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     return (
@@ -36,7 +42,7 @@ export const PortfolioPieChart = ({ holdings }: PortfolioPieChartProps) => {
     .filter(h => h.currentValueUSD && h.currentValueUSD > 0)
     .sort((a, b) => (b.currentValueUSD || 0) - (a.currentValueUSD || 0));
 
-  let chartData = [];
+  let chartData: ChartData[] = [];
   let otherValue = 0;
 
   if(totalValue > 0){

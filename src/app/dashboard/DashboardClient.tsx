@@ -193,7 +193,7 @@ export function DashboardClient({ initialHoldings, initialTrades }: { initialHol
       case "Journal":
         return <TradeHistory initialTrades={trades} />;
       case "Holdings":
-        return <HoldingsPage holdings={holdings} isLoading={isInitialLoading} onRefresh={handleRefreshHoldings} walletAddress={publicKey?.toBase58()} />;
+        return <HoldingsPage holdings={holdings} isLoading={isHoldingsLoading} onRefresh={handleRefreshHoldings} walletAddress={publicKey?.toBase58()} />;
       case "Watchlist":
         return <WatchlistPage initialWatchlist={watchlist} dbUser={dbUser} />;
       case "P&L":

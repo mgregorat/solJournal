@@ -47,10 +47,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
     rpcEndpoint: endpoint,
   };
 
-  function handleLogin() {
-    router.push('/dashboard');
-  }
-
   return (
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
@@ -58,13 +54,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <UnifiedWalletProvider wallets={wallets} config={config}>
             <PrivyProvider
               appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID!}
-              onSuccess={handleLogin}
               config={{
-                loginMethods: ['email'],
+                loginMethods: ['email', 'wallet'],
                 appearance: {
                   theme: 'light',
                   accentColor: '#676FFF',
-                  logo: 'https://your-logo-url',
+                  logo: 'https://logo.clearbit.com/tradelog.app',
                 },
                 embeddedWallets: {
                   createOnLogin: 'users-without-wallets',

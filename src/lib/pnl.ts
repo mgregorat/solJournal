@@ -6,19 +6,18 @@ import { getTokenHoldings } from './portfolio'; // We can reuse this helpful fun
 // --- Environment and Clients ---
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
-const heliusApiKey = process.env.HELIUS_API_KEY;
-const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
+const heliusApiKey = process.env.NEXT_PUBLIC_HELIUS_API_KEY;
 
-if (!supabaseUrl || !supabaseServiceKey || !heliusApiKey || !rpcUrl) {
+if (!supabaseUrl || !supabaseServiceKey || !heliusApiKey) {
   const missingKeys = [];
   if (!supabaseUrl) missingKeys.push('NEXT_PUBLIC_SUPABASE_URL');
   if (!supabaseServiceKey) missingKeys.push('SUPABASE_SERVICE_KEY');
-  if (!heliusApiKey) missingKeys.push('HELIUS_API_KEY');
-  if (!rpcUrl) missingKeys.push('NEXT_PUBLIC_RPC_URL');
+  if (!heliusApiKey) missingKeys.push('NEXT_PUBLIC_HELIUS_API_KEY');
   
   throw new Error(`Required environment variables are missing for P&L service: ${missingKeys.join(', ')}`);
 }
 
+const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 const helius = new Helius(heliusApiKey);
 const connection = new Connection(rpcUrl, 'confirmed');
@@ -37,7 +36,7 @@ export interface DailyPnlData {
  * Reuses the robust getTokenHoldings function which handles price fetching.
  */
 async function getCurrentWalletValue(walletAddress: string): Promise<number> {
-  const holdings = await getTokenHoldings(walletAddress);
+  const { holdings } = await getTokenHoldings(walletAddress);
   return holdings.reduce((sum, holding) => sum + (holding.currentValueUSD || 0), 0);
 }
 

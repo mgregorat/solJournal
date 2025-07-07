@@ -55,13 +55,10 @@ export async function POST(req: NextRequest) {
         }
 
         // Handle SOL balance
-        let solBalance = null;
         if (solBalanceData.status === 'fulfilled' && solBalanceData.value) {
-            solBalance = solBalanceData.value;
-            
-            // Add SOL as a holding if balance > 0
-            if (solBalance.sol_balance > 0) {
-                const solHolding = {
+            const solBalance = solBalanceData.value;
+            if (solBalance && solBalance.sol_balance > 0) {
+                enrichedHoldings.unshift({
                     mint: 'So11111111111111111111111111111111111111112', // Wrapped SOL mint
                     amount: solBalance.sol_balance,
                     decimals: 9,
@@ -70,25 +67,16 @@ export async function POST(req: NextRequest) {
                     logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
                     currentPrice: solBalance.price_per_sol,
                     currentValueUSD: solBalance.usd_value,
-                    avgEntryPrice: null, // SOL doesn't have cost basis from this API
-                    totalCostBasis: null,
-                    unrealizedPnL: null,
-                    pnlPercentage: null,
-                    isNativeSOL: true // Flag to identify this as native SOL
-                };
-                
-                // Add SOL holding to the beginning of the array
-                enrichedHoldings.unshift(solHolding);
+                    isNativeSOL: true
+                });
             }
-        } else {
-            console.warn('[API/refresh-holdings] Failed to fetch SOL balance:', 
-                solBalanceData.status === 'rejected' ? solBalanceData.reason : 'No data returned');
+        } else if (solBalanceData.status === 'rejected') {
+            console.error('[API/refresh-holdings] Failed to fetch SOL balance:', solBalanceData.reason);
         }
 
         console.log(`[API/refresh-holdings] Returning ${enrichedHoldings.length} holdings (including SOL if held).`);
         return NextResponse.json({ 
-            holdings: enrichedHoldings,
-            solBalance: solBalance // Include raw SOL balance data for additional info if needed
+            holdings: enrichedHoldings
         });
 
     } catch (error: any) {

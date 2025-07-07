@@ -170,7 +170,7 @@ export async function saveTransactionClassifications(classifications: Transactio
  */
 export async function calculatePortfolioValue(walletAddress: string, timestamp?: Date): Promise<number> {
   try {
-    const holdings = await getTokenHoldings(walletAddress);
+    const { holdings } = await getTokenHoldings(walletAddress);
     let totalValue = 0;
 
     for (const holding of holdings) {
