@@ -4,8 +4,7 @@ import React, { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
-import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
-import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
+// Hardware wallet adapters removed to prevent node-gyp build issues
 import { WalletNotification } from '@/components/WalletNotification';
 import { UnifiedWalletProvider } from "@jup-ag/wallet-adapter";
 import { PrivyProvider } from '@privy-io/react-auth';
@@ -19,8 +18,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const endpoint = useMemo(() => `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`, []);
   
   const wallets = useMemo(() => [
-    new PhantomWalletAdapter(),
-    new SolflareWalletAdapter(),
+    // Hardware wallet adapters removed to prevent node-gyp build issues
+    // Users can connect via browser extension wallets
   ], []);
 
   const config = {

@@ -1,41 +1,39 @@
 # Use Node 18 base image
-FROM node:18
+FROM node:18-alpine
 
-# Install dependencies needed by native modules and puppeteer/chromium
-RUN apt-get update && \
-    apt-get install -y \
+# Install system dependencies needed for node-gyp and native modules
+RUN apk add --no-cache \
     python3 \
-    g++ \
     make \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libxcomposite1 \
-    libxrandr2 \
-    libxdamage1 \
-    libxfixes3 \
-    libasound2 \
-    libpangocairo-1.0-0 \
-    libx11-xcb1 \
-    libxshmfence1 \
-    libgbm1 \
-    libnss3-tools \
-    fonts-liberation \
-    libappindicator3-1 \
-    libxss1 \
-    lsb-release \
-    xdg-utils \
-    wget \
-    ca-certificates
+    g++ \
+    cairo-dev \
+    jpeg-dev \
+    pango-dev \
+    musl-dev \
+    giflib-dev \
+    pixman-dev \
+    pangomm-dev \
+    libjpeg-turbo-dev \
+    freetype-dev
 
 # Set working directory
 WORKDIR /app
 
-# Copy files and install
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with specific npm configuration to avoid problematic packages
+RUN npm config set python python3 && \
+    npm install --no-optional --ignore-scripts
+
+# Copy source code
 COPY . .
-RUN npm install
+
+# Build the application
 RUN npm run build
 
+# Expose port
+EXPOSE 3000
+
+# Start the application
 CMD ["npm", "start"] 
