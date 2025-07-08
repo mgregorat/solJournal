@@ -4,10 +4,8 @@ import React, { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
-import { CoinbaseWalletAdapter } from '@solana/wallet-adapter-coinbase';
 import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
 import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
-import { TrustWalletAdapter } from '@solana/wallet-adapter-trust';
 import { WalletNotification } from '@/components/WalletNotification';
 import { UnifiedWalletProvider } from "@jup-ag/wallet-adapter";
 import { PrivyProvider } from '@privy-io/react-auth';
@@ -23,8 +21,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const wallets = useMemo(() => [
     new PhantomWalletAdapter(),
     new SolflareWalletAdapter(),
-    new CoinbaseWalletAdapter(),
-    new TrustWalletAdapter(),
   ], []);
 
   const config = {
