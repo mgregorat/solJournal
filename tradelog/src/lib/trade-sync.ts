@@ -1,9 +1,12 @@
 // This file will house the core logic for fetching, processing, and saving trades.
 // It will be used by both the interactive sync button and the background cron job.
 
-import { supabaseAdmin } from './supabaseAdmin';
+import { Trade } from './types';
+import { supabaseAdmin } from '../app/lib/supabaseAdmin';
 
 const SOL_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
+
+const JUPITER_API_URL = 'https://public.api.mainnet-beta.solana.com';
 
 const solPriceCache = new Map<string, number>();
 export async function getSolPrice(date: string): Promise<number> {

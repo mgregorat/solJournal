@@ -37,8 +37,8 @@ export async function GET(req: NextRequest) {
     console.log('Database connection successful');
 
     // Check if P&L tables exist
-    const tables = ['daily_snapshots', 'transaction_classifications', 'portfolio_holdings_history'];
-    const tableStatus = {};
+    const tables = ['wallets', 'trades', 'pnl_daily_snapshot'];
+    const tableStatus: { [key: string]: { exists: boolean, count?: number, error?: string } } = {};
 
     for (const table of tables) {
       try {

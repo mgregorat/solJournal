@@ -36,7 +36,7 @@ export const PortfolioPieChart = ({ holdings }: PortfolioPieChartProps) => {
     .filter(h => h.currentValueUSD && h.currentValueUSD > 0)
     .sort((a, b) => (b.currentValueUSD || 0) - (a.currentValueUSD || 0));
 
-  let chartData = [];
+  let chartData: { name: string, value: number, symbol: string }[] = [];
   let otherValue = 0;
 
   if(totalValue > 0){
@@ -46,7 +46,7 @@ export const PortfolioPieChart = ({ holdings }: PortfolioPieChartProps) => {
     chartData = mainHoldings.map(h => ({
       name: h.symbol || 'Unknown',
       value: h.currentValueUSD || 0,
-      percent: ((h.currentValueUSD || 0) / totalValue) * 100,
+      symbol: h.symbol || 'Unknown',
     }));
 
     if (otherHoldings.length > 0) {
@@ -54,7 +54,7 @@ export const PortfolioPieChart = ({ holdings }: PortfolioPieChartProps) => {
       chartData.push({
         name: 'Other',
         value: otherValue,
-        percent: (otherValue / totalValue) * 100,
+        symbol: 'Other',
       });
     }
   } else if (processedHoldings.length > 0) {
@@ -62,7 +62,7 @@ export const PortfolioPieChart = ({ holdings }: PortfolioPieChartProps) => {
     chartData = processedHoldings.map(h => ({
         name: h.symbol || 'Unknown',
         value: h.currentValueUSD || 0,
-        percent: 100 / processedHoldings.length, // Distribute percentage equally
+        symbol: h.symbol || 'Unknown',
     }));
   }
 

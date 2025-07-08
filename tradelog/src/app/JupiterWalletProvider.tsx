@@ -1,43 +1,30 @@
 'use client';
 
-import { IUnifiedWalletConfig, UnifiedWalletProvider } from '@jup-ag/wallet-adapter';
+import { UnifiedWalletProvider } from '@jup-ag/wallet-adapter';
 import { FC, ReactNode } from 'react';
 import {
-  CoinbaseWalletAdapter,
   PhantomWalletAdapter,
-  SolflareWalletAdapter,
-  TrustWalletAdapter,
 } from '@solana/wallet-adapter-wallets';
 import { WalletNotification } from '@/components/WalletNotification';
 
-interface JupiterWalletProviderProps {
-  children: ReactNode;
-}
-
-export const JupiterWalletProvider: FC<JupiterWalletProviderProps> = ({ children }) => {
+export const JupiterWalletProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const wallets = [
     new PhantomWalletAdapter(),
-    new SolflareWalletAdapter(),
-    new CoinbaseWalletAdapter(),
-    new TrustWalletAdapter(),
   ];
 
-  const config: IUnifiedWalletConfig = {
+  const config = {
     autoConnect: true,
-    env: 'mainnet-beta',
+    env: 'mainnet-beta' as const,
     metadata: {
       name: 'Tradelog',
-      description: 'Log your Solana trades.',
-      url: 'https://tradelog.app',
-      iconUrls: [],
+      description: 'Your personal crypto trading journal',
+      url: 'https://tradelog.pro',
+      iconUrls: ['https://tradelog.pro/icon.png'],
     },
     notificationCallback: WalletNotification,
     walletlistExplanation: {
       href: 'https://station.jup.ag/docs/additional-topics/wallet-list',
     },
-    theme: 'dark',
-    lang: 'en',
-    rpcEndpoint: `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`,
   };
 
   return (

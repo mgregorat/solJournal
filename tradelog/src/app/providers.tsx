@@ -14,14 +14,14 @@ import { WalletNotification } from '@/components/WalletNotification';
 import { UnifiedWalletProvider } from "@jup-ag/wallet-adapter";
 import { PrivyProvider } from '@privy-io/react-auth';
 import { useRouter } from 'next/navigation';
+import { PrivyLoginHandler } from './PrivyLoginHandler';
 
 require('@solana/wallet-adapter-react-ui/styles.css');
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const network = WalletAdapterNetwork.Mainnet;
   const endpoint = useMemo(() => `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`, []);
-  const router = useRouter();
-
+  
   const wallets = useMemo(() => [
     new PhantomWalletAdapter(),
     new SolflareWalletAdapter(),
@@ -47,10 +47,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
     rpcEndpoint: endpoint,
   };
 
-  function handleLogin() {
-    router.push('/dashboard');
-  }
-
   return (
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
@@ -58,7 +54,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <UnifiedWalletProvider wallets={wallets} config={config}>
             <PrivyProvider
               appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID!}
-              onSuccess={handleLogin}
               config={{
                 loginMethods: ['email'],
                 appearance: {
@@ -71,7 +66,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
                 },
               }}
             >
-              {children}
+              <PrivyLoginHandler>
+                {children}
+              </PrivyLoginHandler>
             </PrivyProvider>
           </UnifiedWalletProvider>
         </WalletModalProvider>

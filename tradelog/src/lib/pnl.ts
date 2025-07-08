@@ -7,14 +7,14 @@ import { getTokenHoldings } from './portfolio'; // We can reuse this helpful fun
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 const heliusApiKey = process.env.HELIUS_API_KEY;
-const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
+const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
 
 if (!supabaseUrl || !supabaseServiceKey || !heliusApiKey || !rpcUrl) {
   const missingKeys = [];
   if (!supabaseUrl) missingKeys.push('NEXT_PUBLIC_SUPABASE_URL');
   if (!supabaseServiceKey) missingKeys.push('SUPABASE_SERVICE_KEY');
   if (!heliusApiKey) missingKeys.push('HELIUS_API_KEY');
-  if (!rpcUrl) missingKeys.push('NEXT_PUBLIC_RPC_URL');
+  if (!rpcUrl) missingKeys.push('NEXT_PUBLIC_SOLANA_RPC_URL');
   
   throw new Error(`Required environment variables are missing for P&L service: ${missingKeys.join(', ')}`);
 }
