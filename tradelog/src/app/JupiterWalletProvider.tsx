@@ -2,9 +2,7 @@
 
 import { UnifiedWalletProvider } from '@jup-ag/wallet-adapter';
 import { FC, ReactNode } from 'react';
-import {
-  PhantomWalletAdapter,
-} from '@solana/wallet-adapter-wallets';
+import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
 import { WalletNotification } from '@/components/WalletNotification';
 
 export const JupiterWalletProvider: FC<{ children: ReactNode }> = ({ children }) => {
