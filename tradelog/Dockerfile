@@ -32,6 +32,7 @@ COPY tradelog/public ./public
 COPY tradelog/next.config.mjs ./
 COPY tradelog/tailwind.config.mjs ./
 COPY tradelog/postcss.config.mjs ./
+COPY tradelog/postcss.config.js ./
 COPY tradelog/tsconfig.json ./
 COPY tradelog/components.json ./
 COPY tradelog/eslint.config.mjs ./
@@ -43,12 +44,20 @@ ENV NEXT_PUBLIC_PRIVY_APP_ID=${NEXT_PUBLIC_PRIVY_APP_ID}
 ENV NEXT_PUBLIC_SOLANA_RPC_URL=${NEXT_PUBLIC_SOLANA_RPC_URL}
 ENV NEXT_PUBLIC_HELIUS_API_KEY=${NEXT_PUBLIC_HELIUS_API_KEY}
 
-# Debug: Check if autoprefixer is installed
-RUN echo "Checking autoprefixer installation:" && \
-    npm list autoprefixer || echo "autoprefixer not found" && \
-    echo "Contents of node_modules:" && ls -la node_modules/ | grep -E "(autoprefixer|postcss)" && \
-    echo "Checking if autoprefixer can be required:" && \
-    node -e "try { require('autoprefixer'); console.log('autoprefixer OK'); } catch(e) { console.log('autoprefixer ERROR:', e.message); }"
+# Debug: Check if autoprefixer is installed and working
+RUN echo "=== DEBUGGING AUTOPREFIXER ===" && \
+    echo "1. Checking npm list:" && \
+    npm list autoprefixer postcss tailwindcss || echo "Some packages not found in npm list" && \
+    echo "2. Checking node_modules directories:" && \
+    ls -la node_modules/ | grep -E "(autoprefixer|postcss|tailwindcss)" && \
+    echo "3. Checking if packages can be required:" && \
+    node -e "try { require('autoprefixer'); console.log('✓ autoprefixer OK'); } catch(e) { console.log('✗ autoprefixer ERROR:', e.message); }" && \
+    node -e "try { require('postcss'); console.log('✓ postcss OK'); } catch(e) { console.log('✗ postcss ERROR:', e.message); }" && \
+    node -e "try { require('tailwindcss'); console.log('✓ tailwindcss OK'); } catch(e) { console.log('✗ tailwindcss ERROR:', e.message); }" && \
+    echo "4. Checking PostCSS config files:" && \
+    ls -la postcss.config.* && \
+    echo "5. Testing PostCSS config:" && \
+    node -e "try { const config = require('./postcss.config.js'); console.log('✓ PostCSS config OK:', Object.keys(config.plugins)); } catch(e) { console.log('✗ PostCSS config ERROR:', e.message); }"
 
 # Debug: List directory contents
 RUN echo "Contents of /app:" && ls -la /app && \
