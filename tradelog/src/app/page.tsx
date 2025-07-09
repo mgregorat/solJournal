@@ -7,9 +7,10 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Check, CandlestickChart, BarChart, BookOpen, Link as LinkIcon, AlertTriangle, Send } from "lucide-react";
+import { LoginButton, HeroLoginButton } from "@/components/LoginButton";
 
 export default function LandingPage() {
-  const { login, authenticated } = usePrivy();
+  const { authenticated } = usePrivy();
   const router = useRouter();
 
   useEffect(() => {
@@ -63,7 +64,7 @@ export default function LandingPage() {
             <Button>Go to Dashboard</Button>
           </Link>
         ) : (
-          <Button onClick={login}>Get Started</Button>
+          <LoginButton />
         )}
       </header>
 
@@ -82,9 +83,7 @@ export default function LandingPage() {
             </Button>
           </Link>
         ) : (
-          <Button size="lg" className="bg-green-500 hover:bg-green-600 text-black font-bold" onClick={login}>
-              Get Started
-          </Button>
+          <HeroLoginButton />
         )}
       </main>
 
