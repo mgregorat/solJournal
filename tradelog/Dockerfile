@@ -1,30 +1,19 @@
-# Use Node 18 base image
 FROM node:18-alpine
 
-# Install system dependencies needed for node-gyp and native modules
-RUN apk add --no-cache \
-    python3 \
-    make \
-    g++ \
-    cairo-dev \
-    jpeg-dev \
-    pango-dev \
-    musl-dev \
-    giflib-dev \
-    pixman-dev \
-    pangomm-dev \
-    libjpeg-turbo-dev \
-    freetype-dev
+# Install Python and build tools for node-gyp
+RUN apk add --no-cache python3 make g++ py3-pip
 
-# Set working directory
+# Set Python environment
+ENV PYTHON=/usr/bin/python3
+
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies with specific npm configuration to avoid problematic packages
+# Configure npm to use python3 and install dependencies
 RUN npm config set python python3 && \
-    npm install --no-optional --ignore-scripts
+    npm ci --only=production --ignore-scripts --no-optional
 
 # Copy source code
 COPY . .
