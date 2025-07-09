@@ -34,16 +34,26 @@ COPY tradelog/eslint.config.mjs ./
 # Create postcss.config.js to ensure autoprefixer is properly configured
 RUN echo "module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } }" > postcss.config.js
 
-# Set build-time environment variables from Railway
+# Declare build-time arguments that can be passed in from Railway
+ARG NEXT_PUBLIC_PRIVY_APP_ID
+ARG NEXT_PUBLIC_HELIUS_API_KEY
+ARG SUPABASE_SERVICE_KEY
+ARG HELIUS_API_KEY
+ARG CRON_SECRET
+ARG BIRDEYE_API_KEY
+
+# Set these arguments as environment variables so they are available to the build process
+ENV NEXT_PUBLIC_PRIVY_APP_ID=$NEXT_PUBLIC_PRIVY_APP_ID
+ENV NEXT_PUBLIC_HELIUS_API_KEY=$NEXT_PUBLIC_HELIUS_API_KEY
+ENV SUPABASE_SERVICE_KEY=$SUPABASE_SERVICE_KEY
+ENV HELIUS_API_KEY=$HELIUS_API_KEY
+ENV CRON_SECRET=$CRON_SECRET
+ENV BIRDEYE_API_KEY=$BIRDEYE_API_KEY
+
+# Set other fixed environment variables
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-ENV NEXT_PUBLIC_PRIVY_APP_ID=${NEXT_PUBLIC_PRIVY_APP_ID}
 ENV NEXT_PUBLIC_SOLANA_RPC_URL=${NEXT_PUBLIC_SOLANA_RPC_URL}
-ENV NEXT_PUBLIC_HELIUS_API_KEY=${NEXT_PUBLIC_HELIUS_API_KEY}
-ENV SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
-ENV HELIUS_API_KEY=${HELIUS_API_KEY}
-ENV CRON_SECRET=${CRON_SECRET}
-ENV BIRDEYE_API_KEY=${BIRDEYE_API_KEY}
 
 # Set NODE_ENV to production only after installation
 ENV NODE_ENV=production
