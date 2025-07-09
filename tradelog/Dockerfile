@@ -6,7 +6,7 @@ RUN apk add --no-cache python3 make g++ py3-pip
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY tradelog/package*.json ./
 
 # Set environment variables for npm and node-gyp
 ENV npm_config_python=/usr/bin/python3
@@ -25,14 +25,14 @@ RUN npm install --no-optional --ignore-scripts --no-fund --no-audit || \
      npm install --no-optional --no-fund --no-audit)
 
 # Copy source code and configuration files
-COPY src ./src
-COPY public ./public
-COPY next.config.mjs ./
-COPY tailwind.config.mjs ./
-COPY postcss.config.mjs ./
-COPY tsconfig.json ./
-COPY components.json ./
-COPY eslint.config.mjs ./
+COPY tradelog/src ./src
+COPY tradelog/public ./public
+COPY tradelog/next.config.mjs ./
+COPY tradelog/tailwind.config.mjs ./
+COPY tradelog/postcss.config.mjs ./
+COPY tradelog/tsconfig.json ./
+COPY tradelog/components.json ./
+COPY tradelog/eslint.config.mjs ./
 
 # Debug: List directory contents
 RUN echo "Contents of /app:" && ls -la /app && \
