@@ -54,6 +54,15 @@
     "typescript": "5.8.3"
   },
   "overrides": {
-    "usb": false
+    "usb": false,
+    "node-hid": false,
+    "@ledgerhq/hw-transport-node-hid": false,
+    "@ledgerhq/hw-transport-node-hid-noevents": false,
+    "@ledgerhq/hw-transport-node-hid-singleton": false,
+    "@trezor/connect": false,
+    "@trezor/connect-web": false,
+    "serialport": false,
+    "bindings": false,
+    "prebuild-install": false
   }
 }

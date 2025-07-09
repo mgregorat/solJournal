@@ -11,9 +11,17 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Configure npm to use python3 and install dependencies
+# Create .npmrc to skip optional dependencies and scripts
+RUN echo "optional=false" >> .npmrc && \
+    echo "ignore-scripts=true" >> .npmrc && \
+    echo "fund=false" >> .npmrc && \
+    echo "audit=false" >> .npmrc
+
+# Configure npm and install dependencies with aggressive skipping
 RUN npm config set python python3 && \
-    npm ci --only=production --ignore-scripts --no-optional
+    npm config set optional false && \
+    npm config set ignore-scripts true && \
+    npm install --production --no-optional --ignore-scripts --no-fund --no-audit --legacy-peer-deps
 
 # Copy source code
 COPY . .
