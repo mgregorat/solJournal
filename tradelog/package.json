@@ -63,6 +63,16 @@
     "@trezor/connect-web": false,
     "serialport": false,
     "bindings": false,
-    "prebuild-install": false
+    "prebuild-install": false,
+    "node-gyp": false,
+    "fsevents": false,
+    "canvas": false,
+    "sharp": false,
+    "sqlite3": false,
+    "bcrypt": false,
+    "grpc": false,
+    "node-sass": false,
+    "fibers": false,
+    "deasync": false
   }
 }
