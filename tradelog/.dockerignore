@@ -21,4 +21,6 @@ build
 *.tgz
 *.tar.gz
 .npm
-.eslintcache 
+.eslintcache
+Dockerfile*
+!Dockerfile 
