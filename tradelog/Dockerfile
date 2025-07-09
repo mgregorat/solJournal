@@ -1,27 +1,28 @@
 FROM node:18-alpine
 
-# Install Python and build tools for node-gyp
+# Install Python and build tools
 RUN apk add --no-cache python3 make g++ py3-pip
-
-# Set Python environment
-ENV PYTHON=/usr/bin/python3
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Set environment variables to skip native builds
+# Set environment variables for npm and node-gyp
+ENV npm_config_python=/usr/bin/python3
+ENV npm_config_node_gyp_python=/usr/bin/python3
 ENV npm_config_build_from_source=false
 ENV npm_config_optional=false
+ENV npm_config_ignore_scripts=true
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV NODE_ENV=production
+ENV PYTHON=/usr/bin/python3
 
-# Install dependencies allowing necessary scripts but skipping optional native modules
-RUN npm config set python /usr/bin/python3 && \
-    npm config set node_gyp_python /usr/bin/python3 && \
-    npm ci --production --no-optional --no-fund --no-audit
+# Install all dependencies (including devDependencies needed for build)
+RUN npm install --no-optional --ignore-scripts --no-fund --no-audit || \
+    (echo "Retrying with scripts enabled..." && \
+     npm install --no-optional --no-fund --no-audit)
 
 # Copy source code
 COPY . .
