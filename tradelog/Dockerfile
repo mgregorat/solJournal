@@ -11,30 +11,17 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Create comprehensive .npmrc to skip all problematic native builds
-RUN echo "optional=false" >> .npmrc && \
-    echo "ignore-scripts=true" >> .npmrc && \
-    echo "fund=false" >> .npmrc && \
-    echo "audit=false" >> .npmrc && \
-    echo "save-exact=true" >> .npmrc && \
-    echo "legacy-peer-deps=true" >> .npmrc && \
-    echo "install-strategy=shallow" >> .npmrc && \
-    echo "prefer-offline=true" >> .npmrc
-
 # Set environment variables to skip native builds
 ENV npm_config_build_from_source=false
-ENV npm_config_cache_max=0
 ENV npm_config_optional=false
-ENV npm_config_ignore_scripts=true
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV NODE_ENV=production
 
-# Install dependencies with maximum skipping
-RUN npm config set python python3 && \
-    npm config set optional false && \
-    npm config set ignore-scripts true && \
-    npm config set build-from-source false && \
-    npm install --omit=optional --ignore-scripts --no-fund --no-audit --legacy-peer-deps --verbose
+# Install dependencies allowing necessary scripts but skipping optional native modules
+RUN npm config set python /usr/bin/python3 && \
+    npm config set node_gyp_python /usr/bin/python3 && \
+    npm ci --production --no-optional --no-fund --no-audit
 
 # Copy source code
 COPY . .
