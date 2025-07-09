@@ -1,7 +1,7 @@
 FROM node:18-alpine
 
-# Install Python and build tools
-RUN apk add --no-cache python3 make g++ py3-pip
+# Install Python, build tools, and Chromium for Puppeteer
+RUN apk add --no-cache chromium python3 make g++ py3-pip nss freetype harfbuzz ca-certificates ttf-freefont
 
 WORKDIR /app
 
