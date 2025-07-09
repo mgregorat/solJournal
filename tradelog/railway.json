@@ -2,7 +2,18 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "dockerfile",
-    "dockerfilePath": "tradelog/Dockerfile"
+    "dockerfilePath": "tradelog/Dockerfile",
+    "args": {
+      "NEXT_PUBLIC_PRIVY_APP_ID": "${{secrets.NEXT_PUBLIC_PRIVY_APP_ID}}",
+      "NEXT_PUBLIC_HELIUS_API_KEY": "${{secrets.NEXT_PUBLIC_HELIUS_API_KEY}}",
+      "NEXT_PUBLIC_SUPABASE_URL": "${{secrets.NEXT_PUBLIC_SUPABASE_URL}}",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY": "${{secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY}}",
+      "NEXT_PUBLIC_SOLANA_RPC_URL": "${{secrets.NEXT_PUBLIC_SOLANA_RPC_URL}}",
+      "SUPABASE_SERVICE_KEY": "${{secrets.SUPABASE_SERVICE_KEY}}",
+      "HELIUS_API_KEY": "${{secrets.HELIUS_API_KEY}}",
+      "CRON_SECRET": "${{secrets.CRON_SECRET}}",
+      "BIRDEYE_API_KEY": "${{secrets.BIRDEYE_API_KEY}}"
+    }
   },
   "deploy": {
     "startCommand": "npm start",

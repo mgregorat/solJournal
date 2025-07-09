@@ -22,11 +22,14 @@ const COLORS = [
 
 const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
+    const data = payload[0].payload;
     return (
-      <div className="bg-gray-800 text-white p-2 rounded-md border border-gray-700 shadow-lg">
-        <p className="font-semibold">{`${payload[0].name}`}</p>
-        <p className="text-sm">{`Value: $${(payload[0].value).toFixed(2)}`}</p>
-        <p className="text-xs text-gray-400">{`(${payload[0].payload.percent.toFixed(2)}%)`}</p>
+      <div className="bg-gray-800 text-white p-2 rounded border border-gray-700">
+        <p className="font-semibold">{data.name || 'Unknown'}</p>
+        <p className="text-sm">{`Value: $${(payload[0].value || 0).toFixed(2)}`}</p>
+        {data.percent !== undefined && (
+          <p className="text-xs text-gray-400">{`(${(data.percent || 0).toFixed(2)}%)`}</p>
+        )}
       </div>
     );
   }
