@@ -34,13 +34,23 @@ COPY tradelog/tsconfig.json ./
 COPY tradelog/components.json ./
 COPY tradelog/eslint.config.mjs ./
 
+# Copy environment file for build-time variables
+COPY tradelog/.env.local ./.env.local
+
+# Set build-time environment variables from Railway
+ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+ENV NEXT_PUBLIC_PRIVY_APP_ID=${NEXT_PUBLIC_PRIVY_APP_ID}
+ENV NEXT_PUBLIC_SOLANA_RPC_URL=${NEXT_PUBLIC_SOLANA_RPC_URL}
+ENV NEXT_PUBLIC_HELIUS_API_KEY=${NEXT_PUBLIC_HELIUS_API_KEY}
+
 # Debug: List directory contents
 RUN echo "Contents of /app:" && ls -la /app && \
     echo "Contents of /app/src:" && ls -la /app/src && \
     echo "Contents of /app/src/app:" && ls -la /app/src/app
 
-# Build the application
-RUN npm run build
+# Build the application with verbose output
+RUN npm run build --verbose || (echo "Build failed, showing more info:" && npm run build)
 
 # Expose port
 EXPOSE 3000
