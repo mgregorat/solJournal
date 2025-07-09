@@ -4,8 +4,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
-  // This error will be caught by the server and should provide a clear message.
-  throw new Error('Supabase URL and Service Key are required for admin operations. Check your .env.local file.');
+  throw new Error('Supabase URL and Service Key are required for admin operations. Check your environment variables.');
 }
 
 /**
