@@ -13,16 +13,15 @@ ENV npm_config_python=/usr/bin/python3
 ENV npm_config_node_gyp_python=/usr/bin/python3
 ENV npm_config_build_from_source=false
 ENV npm_config_optional=false
-ENV npm_config_ignore_scripts=true
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV NODE_ENV=production
 ENV PYTHON=/usr/bin/python3
 
-# Install all dependencies (including devDependencies needed for build)
-RUN npm install --no-optional --ignore-scripts --no-fund --no-audit || \
-    (echo "Retrying with scripts enabled..." && \
-     npm install --no-optional --no-fund --no-audit)
+# Install all dependencies (try without ignore-scripts first, then with)
+RUN npm install --no-optional --no-fund --no-audit || \
+    (echo "Retrying with scripts disabled..." && \
+     npm install --no-optional --ignore-scripts --no-fund --no-audit)
 
 # Copy source code and configuration files
 COPY tradelog/src ./src
@@ -40,6 +39,11 @@ ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 ENV NEXT_PUBLIC_PRIVY_APP_ID=${NEXT_PUBLIC_PRIVY_APP_ID}
 ENV NEXT_PUBLIC_SOLANA_RPC_URL=${NEXT_PUBLIC_SOLANA_RPC_URL}
 ENV NEXT_PUBLIC_HELIUS_API_KEY=${NEXT_PUBLIC_HELIUS_API_KEY}
+
+# Debug: Check if autoprefixer is installed
+RUN echo "Checking autoprefixer installation:" && \
+    npm list autoprefixer || echo "autoprefixer not found" && \
+    echo "Contents of node_modules:" && ls -la node_modules/ | grep -E "(autoprefixer|postcss)"
 
 # Debug: List directory contents
 RUN echo "Contents of /app:" && ls -la /app && \
