@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Helius } from 'helius-sdk';
 
-const heliusApiKey = process.env.HELIUS_API_KEY;
+let helius: Helius | null = null;
 
-if (!heliusApiKey) {
-    // This will be caught by the server and should provide a clear message.
-    throw new Error("Helius API key is not configured. Please set HELIUS_API_KEY in your .env.local file.");
+function getHeliusClient() {
+    if (helius) {
+        return helius;
+    }
+
+    const heliusApiKey = process.env.HELIUS_API_KEY;
+
+    if (!heliusApiKey) {
+        throw new Error("Helius API key is not configured. Please set HELIUS_API_KEY in your .env.local file.");
+    }
+
+    helius = new Helius(heliusApiKey);
+    return helius;
 }
-
-const helius = new Helius(heliusApiKey);
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
@@ -19,7 +27,8 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        const response = await helius.rpc.getAssetsByOwner({ ownerAddress: walletAddress, page: 1 });
+        const heliusClient = getHeliusClient();
+        const response = await heliusClient.rpc.getAssetsByOwner({ ownerAddress: walletAddress, page: 1 });
         return NextResponse.json(response);
 
     } catch (error: any) {
