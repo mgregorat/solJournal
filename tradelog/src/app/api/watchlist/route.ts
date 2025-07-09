@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import puppeteer from 'puppeteer';
 
+// Define types for the watchlist items
+interface WatchlistItem {
+    token_address: string;
+}
+
 async function fetchTokenDetails(mintAddress: string) {
     // This is the core logic from the watchlist-token-details route
     const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
@@ -71,9 +76,12 @@ export async function GET(request: Request) {
 
         if (error) throw error;
 
+        // Type assertion to ensure proper typing
+        const typedWatchlistItems = watchlistItems as WatchlistItem[];
+
         // Fetch details for all tokens in parallel
         const detailedWatchlist = await Promise.all(
-            watchlistItems.map(item => fetchTokenDetails(item.token_address))
+            typedWatchlistItems.map(item => fetchTokenDetails(item.token_address))
         );
 
         // Filter out any tokens for which details couldn't be fetched
