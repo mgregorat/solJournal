@@ -6,7 +6,10 @@ export async function fetchHoldings(walletAddress: string) {
 
   let browser;
   try {
-    browser = await puppeteer.launch({ headless: true, args: ['--start-maximized'] });
+    browser = await puppeteer.launch({
+        executablePath: '/usr/bin/chromium-browser',
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
     const page = await browser.newPage();
 
     await page.setUserAgent(
@@ -36,7 +39,10 @@ export async function fetchSOLBalance(walletAddress: string) {
 
   let browser;
   try {
-    browser = await puppeteer.launch({ headless: true, args: ['--start-maximized'] });
+    browser = await puppeteer.launch({
+        executablePath: '/usr/bin/chromium-browser',
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
     const page = await browser.newPage();
 
     // Set headers to mimic a real browser request

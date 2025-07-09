@@ -1,7 +1,18 @@
 FROM node:18-alpine
 
-# Install Python and build tools. We no longer need chromium here.
-RUN apk add --no-cache python3 make g++ py3-pip
+# Install system dependencies required by the Puppeteer-downloaded version of Chromium
+# See: https://github.com/puppeteer/puppeteer/blob/main/docs/troubleshooting.md#running-puppeteer-on-alpine
+RUN apk add --no-cache \
+      chromium \
+      nss \
+      freetype \
+      harfbuzz \
+      ca-certificates \
+      ttf-freefont \
+      python3 \
+      make \
+      g++ \
+      py3-pip
 
 WORKDIR /app
 
