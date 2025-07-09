@@ -24,8 +24,20 @@ RUN npm install --no-optional --ignore-scripts --no-fund --no-audit || \
     (echo "Retrying with scripts enabled..." && \
      npm install --no-optional --no-fund --no-audit)
 
-# Copy source code
-COPY . .
+# Copy source code and configuration files
+COPY src ./src
+COPY public ./public
+COPY next.config.mjs ./
+COPY tailwind.config.mjs ./
+COPY postcss.config.mjs ./
+COPY tsconfig.json ./
+COPY components.json ./
+COPY eslint.config.mjs ./
+
+# Debug: List directory contents
+RUN echo "Contents of /app:" && ls -la /app && \
+    echo "Contents of /app/src:" && ls -la /app/src && \
+    echo "Contents of /app/src/app:" && ls -la /app/src/app
 
 # Build the application
 RUN npm run build
