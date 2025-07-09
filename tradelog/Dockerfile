@@ -15,10 +15,9 @@ ENV npm_config_build_from_source=false
 ENV npm_config_optional=false
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_SKIP_DOWNLOAD=true
-ENV NODE_ENV=production
 ENV PYTHON=/usr/bin/python3
 
-# Install all dependencies (try without ignore-scripts first, then with)
+# Install all dependencies (including devDependencies)
 RUN npm install --no-optional --no-fund --no-audit || \
     (echo "Retrying with scripts disabled..." && \
      npm install --no-optional --ignore-scripts --no-fund --no-audit)
@@ -31,11 +30,12 @@ COPY tradelog/src ./src
 COPY tradelog/public ./public
 COPY tradelog/next.config.mjs ./
 COPY tradelog/tailwind.config.mjs ./
-COPY tradelog/postcss.config.mjs ./
-COPY tradelog/postcss.config.js ./
 COPY tradelog/tsconfig.json ./
 COPY tradelog/components.json ./
 COPY tradelog/eslint.config.mjs ./
+
+# Create a minimal PostCSS config in the container
+RUN echo "module.exports = { plugins: { tailwindcss: {}, autoprefixer: {} } }" > postcss.config.js
 
 # Set build-time environment variables from Railway
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
@@ -43,6 +43,9 @@ ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 ENV NEXT_PUBLIC_PRIVY_APP_ID=${NEXT_PUBLIC_PRIVY_APP_ID}
 ENV NEXT_PUBLIC_SOLANA_RPC_URL=${NEXT_PUBLIC_SOLANA_RPC_URL}
 ENV NEXT_PUBLIC_HELIUS_API_KEY=${NEXT_PUBLIC_HELIUS_API_KEY}
+
+# Set NODE_ENV to production only after installation
+ENV NODE_ENV=production
 
 # Debug: Check if autoprefixer is installed and working
 RUN echo "=== DEBUGGING AUTOPREFIXER ===" && \
