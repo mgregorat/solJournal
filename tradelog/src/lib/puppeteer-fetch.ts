@@ -1,15 +1,25 @@
 import 'server-only';
 import puppeteer from 'puppeteer';
 
+const getLaunchOptions = () => {
+    const isProduction = process.env.NODE_ENV === 'production';
+    if (isProduction) {
+        return {
+            headless: true,
+            executablePath: '/usr/bin/chromium-browser',
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+        };
+    }
+    // For local development
+    return { headless: true, args: ['--start-maximized'] };
+};
+
 export async function fetchHoldings(walletAddress: string) {
   const URL = `https://gmgn.ai/api/v1/wallet_holdings/sol/${walletAddress}?device_id=797ada39-37b1-46c2-8e8a-f813ac27ebad&client_id=gmgn_web_20250630-556-4ee1d1a&from_app=gmgn&app_ver=20250630-556-4ee1d1a&tz_name=America%2FNew_York&tz_offset=-14400&app_lang=en-US&fp_did=ffaa653dc5d83387b22ee019166ad927&os=web&limit=50&orderby=last_active_timestamp&direction=desc&showsmall=true&sellout=true&hide_airdrop=false&tx30d=true`;
 
   let browser;
   try {
-    browser = await puppeteer.launch({
-        executablePath: '/usr/bin/chromium-browser',
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    browser = await puppeteer.launch(getLaunchOptions());
     const page = await browser.newPage();
 
     await page.setUserAgent(
@@ -39,10 +49,7 @@ export async function fetchSOLBalance(walletAddress: string) {
 
   let browser;
   try {
-    browser = await puppeteer.launch({
-        executablePath: '/usr/bin/chromium-browser',
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    browser = await puppeteer.launch(getLaunchOptions());
     const page = await browser.newPage();
 
     // Set headers to mimic a real browser request
