@@ -1,19 +1,26 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { getTokenHoldings } from './portfolio';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+let supabase: SupabaseClient | null = null;
 
-if (!supabaseUrl || !supabaseServiceKey) {
-  throw new Error('Supabase URL and Service Key are required for P&L operations. Check your .env.local file.');
-}
+function getSupabaseClient(): SupabaseClient {
+  if (!supabase) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false
+    if (!supabaseUrl || !supabaseServiceKey) {
+      throw new Error('Supabase URL and Service Key are required for P&L operations. Check your .env.local file.');
+    }
+
+    supabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    });
   }
-});
+  return supabase;
+}
 
 export interface DailySnapshot {
   id?: number;
@@ -149,7 +156,8 @@ export async function fetchAndClassifyTransactions(walletAddress: string, limit:
  */
 export async function saveTransactionClassifications(classifications: TransactionClassification[]): Promise<void> {
   try {
-    const { error } = await supabase
+    const supabaseClient = getSupabaseClient();
+    const { error } = await supabaseClient
       .from('transaction_classifications')
       .upsert(classifications, { 
         onConflict: 'transaction_signature',
@@ -191,11 +199,12 @@ export async function createDailySnapshot(walletAddress: string, date: Date): Pr
   const dateString = date.toISOString().split('T')[0];
   
   try {
+    const supabaseClient = getSupabaseClient();
     // Calculate portfolio value
     const portfolioValue = await calculatePortfolioValue(walletAddress, date);
     
     // Check if snapshot already exists
-    const { data: existingSnapshot } = await supabase
+    const { data: existingSnapshot } = await supabaseClient
       .from('daily_snapshots')
       .select('*')
       .eq('wallet_address', walletAddress)
@@ -204,7 +213,7 @@ export async function createDailySnapshot(walletAddress: string, date: Date): Pr
 
     if (existingSnapshot) {
       // Update existing snapshot
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from('daily_snapshots')
         .update({
           end_balance_usd: portfolioValue,
@@ -218,7 +227,7 @@ export async function createDailySnapshot(walletAddress: string, date: Date): Pr
       return data;
     } else {
       // Create new snapshot
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from('daily_snapshots')
         .insert({
           wallet_address: walletAddress,
@@ -245,8 +254,9 @@ export async function calculateDailyPnL(walletAddress: string, date: Date): Prom
   const dateString = date.toISOString().split('T')[0];
   
   try {
+    const supabaseClient = getSupabaseClient();
     // Get the snapshot for this date
-    const { data: snapshot, error } = await supabase
+    const { data: snapshot, error } = await supabaseClient
       .from('daily_snapshots')
       .select('*')
       .eq('wallet_address', walletAddress)
@@ -268,7 +278,7 @@ export async function calculateDailyPnL(walletAddress: string, date: Date): Prom
     }
 
     // Update the snapshot with P&L
-    const { data: updatedSnapshot, error: updateError } = await supabase
+    const { data: updatedSnapshot, error: updateError } = await supabaseClient
       .from('daily_snapshots')
       .update({
         pnl_percent: pnlPercent,
@@ -290,13 +300,17 @@ export async function calculateDailyPnL(walletAddress: string, date: Date): Prom
  * Gets daily P&L data for a wallet over a date range
  */
 export async function getDailyPnLData(walletAddress: string, startDate: Date, endDate: Date): Promise<DailySnapshot[]> {
+  const startDateString = startDate.toISOString().split('T')[0];
+  const endDateString = endDate.toISOString().split('T')[0];
+  
   try {
-    const { data, error } = await supabase
+    const supabaseClient = getSupabaseClient();
+    const { data, error } = await supabaseClient
       .from('daily_snapshots')
       .select('*')
       .eq('wallet_address', walletAddress)
-      .gte('snapshot_date', startDate.toISOString().split('T')[0])
-      .lte('snapshot_date', endDate.toISOString().split('T')[0])
+      .gte('snapshot_date', startDateString)
+      .lte('snapshot_date', endDateString)
       .order('snapshot_date', { ascending: true });
 
     if (error) throw error;
@@ -311,21 +325,66 @@ export async function getDailyPnLData(walletAddress: string, startDate: Date, en
  * Rebuilds P&L snapshots for a specific date (utility function)
  */
 export async function rebuildDailySnapshot(walletAddress: string, date: Date): Promise<DailySnapshot | null> {
-  try {
-    // Delete existing snapshot
-    await supabase
-      .from('daily_snapshots')
-      .delete()
-      .eq('wallet_address', walletAddress)
-      .eq('snapshot_date', date.toISOString().split('T')[0]);
+    const dateString = date.toISOString().split('T')[0];
+    const supabaseClient = getSupabaseClient();
+  
+    try {
+        // 1. Delete existing snapshot for the day
+        await supabaseClient
+            .from('daily_snapshots')
+            .delete()
+            .eq('wallet_address', walletAddress)
+            .eq('snapshot_date', dateString);
 
-    // Create new snapshot
-    const newSnapshot = await createDailySnapshot(walletAddress, date);
-    
-    // Calculate P&L
-    return await calculateDailyPnL(walletAddress, date);
-  } catch (error) {
-    console.error('Error rebuilding daily snapshot:', error);
-    return null;
-  }
+        // 2. Determine start of day balance
+        // Try to get previous day's end balance
+        const yesterday = new Date(date);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayString = yesterday.toISOString().split('T')[0];
+
+        const { data: previousSnapshot } = await supabaseClient
+            .from('daily_snapshots')
+            .select('end_balance_usd')
+            .eq('wallet_address', walletAddress)
+            .eq('snapshot_date', yesterdayString)
+            .single();
+
+        const startBalance = previousSnapshot?.end_balance_usd ?? 0; // Default to 0 if no prev day
+        
+        // 3. Get transactions for the day
+        const transactions = await fetchAndClassifyTransactions(walletAddress, 1000); // Fetch a large number
+        const dayTransactions = transactions.filter(tx => tx.transaction_date.startsWith(dateString));
+        
+        // 4. Calculate net transfers for the day
+        const netTransfers = dayTransactions.reduce((acc, tx) => {
+            if (tx.transaction_type === 'transfer_in' && tx.usd_value) return acc + tx.usd_value;
+            if (tx.transaction_type === 'transfer_out' && tx.usd_value) return acc - tx.usd_value;
+            return acc;
+        }, 0);
+
+        // 5. Calculate end of day balance
+        // For simplicity, we assume the current portfolio value is the end-of-day value.
+        // A more accurate method would require historical price data for all holdings.
+        const endBalance = await calculatePortfolioValue(walletAddress);
+
+        // 6. Create the new snapshot
+        const { data: newSnapshot, error } = await supabaseClient
+            .from('daily_snapshots')
+            .insert({
+                wallet_address: walletAddress,
+                snapshot_date: dateString,
+                start_balance_usd: startBalance + netTransfers,
+                end_balance_usd: endBalance,
+                pnl_percent: ((endBalance - (startBalance + netTransfers)) / (startBalance + netTransfers)) * 100 || 0,
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+        return newSnapshot;
+
+    } catch (error) {
+        console.error(`Error rebuilding snapshot for ${dateString}:`, error);
+        return null;
+    }
 } 
