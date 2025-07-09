@@ -1,27 +1,40 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { Helius } from 'helius-sdk';
-import { getTokenHoldings } from './portfolio'; // We can reuse this helpful function
+import { getTokenHoldings } from './portfolio';
 
-// --- Environment and Clients ---
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
-const heliusApiKey = process.env.HELIUS_API_KEY;
-const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+// --- Lazy-loaded Clients and Environment ---
+let supabase: SupabaseClient | null = null;
+let helius: Helius | null = null;
+let connection: Connection | null = null;
 
-if (!supabaseUrl || !supabaseServiceKey || !heliusApiKey || !rpcUrl) {
-  const missingKeys = [];
-  if (!supabaseUrl) missingKeys.push('NEXT_PUBLIC_SUPABASE_URL');
-  if (!supabaseServiceKey) missingKeys.push('SUPABASE_SERVICE_KEY');
-  if (!heliusApiKey) missingKeys.push('HELIUS_API_KEY');
-  if (!rpcUrl) missingKeys.push('NEXT_PUBLIC_SOLANA_RPC_URL');
-  
-  throw new Error(`Required environment variables are missing for P&L service: ${missingKeys.join(', ')}`);
+function getClients() {
+  if (supabase && helius && connection) {
+    return { supabase, helius, connection };
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+  const heliusApiKey = process.env.HELIUS_API_KEY;
+  const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+
+  if (!supabaseUrl || !supabaseServiceKey || !heliusApiKey || !rpcUrl) {
+    const missingKeys = [];
+    if (!supabaseUrl) missingKeys.push('NEXT_PUBLIC_SUPABASE_URL');
+    if (!supabaseServiceKey) missingKeys.push('SUPABASE_SERVICE_KEY');
+    if (!heliusApiKey) missingKeys.push('HELIUS_API_KEY');
+    if (!rpcUrl) missingKeys.push('NEXT_PUBLIC_SOLANA_RPC_URL');
+    
+    throw new Error(`Required environment variables are missing for P&L service: ${missingKeys.join(', ')}`);
+  }
+
+  supabase = createClient(supabaseUrl, supabaseServiceKey);
+  helius = new Helius(heliusApiKey);
+  connection = new Connection(rpcUrl, 'confirmed');
+
+  return { supabase, helius, connection };
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-const helius = new Helius(heliusApiKey);
-const connection = new Connection(rpcUrl, 'confirmed');
 
 // --- Types ---
 export interface DailyPnlData {
@@ -45,6 +58,7 @@ async function getCurrentWalletValue(walletAddress: string): Promise<number> {
  * Fetches the start-of-day balance from our database.
  */
 async function getStartOfDayBalance(walletAddress: string): Promise<number> {
+  const { supabase } = getClients();
   const today = new Date().toISOString().split('T')[0];
   const { data, error } = await supabase
     .from('daily_balances')
@@ -115,6 +129,7 @@ export async function getTodaysPnl(walletAddress: string): Promise<DailyPnlData>
  * Intended to be run by a cron job at 00:00 UTC.
  */
 export async function takeDailyBalanceSnapshot(walletAddress: string): Promise<void> {
+  const { supabase } = getClients();
   const today = new Date().toISOString().split('T')[0];
   console.log(`Taking daily balance snapshot for ${walletAddress} on ${today}`);
 
