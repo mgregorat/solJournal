@@ -34,9 +34,6 @@ COPY tradelog/tsconfig.json ./
 COPY tradelog/components.json ./
 COPY tradelog/eslint.config.mjs ./
 
-# Copy environment file for build-time variables
-COPY tradelog/.env.local ./.env.local
-
 # Set build-time environment variables from Railway
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
