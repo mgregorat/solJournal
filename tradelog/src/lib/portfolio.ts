@@ -1,4 +1,5 @@
 import { getCache, setCache } from './cache';
+import { Holding } from './types';
 
 const BIRDEYE_API_URL = "https://public-api.birdeye.so/public/price?address=";
 const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -60,7 +61,7 @@ export async function getPrices(mints: Set<string>): Promise<PriceMap> {
   }
 }
 
-export async function getTokenHoldings(walletAddress: string) {
+export async function getTokenHoldings(walletAddress: string): Promise<Holding[]> {
   const { fetchHoldings, fetchSOLBalance } = await import('@/lib/puppeteer-fetch');
   
   const [holdingsData, solBalanceData] = await Promise.allSettled([
@@ -68,14 +69,14 @@ export async function getTokenHoldings(walletAddress: string) {
       fetchSOLBalance(walletAddress)
   ]);
 
-  let enrichedHoldings: any[] = [];
+  let enrichedHoldings: Holding[] = [];
   if (holdingsData.status === 'fulfilled' && holdingsData.value && 
       holdingsData.value.code === 0 && holdingsData.value.data && holdingsData.value.data.holdings) {
       
       const rawHoldings = holdingsData.value.data.holdings;
       const currentHoldings = rawHoldings.filter((holding: any) => parseFloat(holding.balance) > 1e-9);
 
-      enrichedHoldings = currentHoldings.map((holding: any) => {
+      enrichedHoldings = currentHoldings.map((holding: any): Holding => {
           const { token, balance, usd_value, price, avg_cost, cost, unrealized_profit, unrealized_pnl } = holding;
           return {
               mint: token.address,
@@ -96,7 +97,7 @@ export async function getTokenHoldings(walletAddress: string) {
 
   if (solBalanceData.status === 'fulfilled' && solBalanceData.value && solBalanceData.value.sol_balance > 0) {
       const solBalance = solBalanceData.value;
-      const solHolding = {
+      const solHolding: Holding = {
           mint: 'So11111111111111111111111111111111111111112',
           amount: solBalance.sol_balance,
           decimals: 9,
@@ -105,10 +106,10 @@ export async function getTokenHoldings(walletAddress: string) {
           logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
           currentPrice: solBalance.price_per_sol,
           currentValueUSD: solBalance.usd_value,
-          avgEntryPrice: null,
-          totalCostBasis: null,
-          unrealizedPnL: null,
-          pnlPercentage: null,
+          avgEntryPrice: undefined,
+          totalCostBasis: undefined,
+          unrealizedPnL: undefined,
+          pnlPercentage: undefined,
           isNativeSOL: true
       };
       enrichedHoldings.unshift(solHolding);

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { NextRequest, NextResponse } from 'next/server';
+import { Trade } from '@/lib/types';
 
 // This API route uses the admin client to bypass RLS for MVP development.
 // When real authentication is added, we will revisit RLS and client usage.
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
             }
         }
         
-        const tradeToInsert: any = {
+        const tradeToInsert: Partial<Trade> = {
             wallet_address: rawData.wallet_address,
             token_symbol: rawData.token_symbol,
             token_address: rawData.token_address,

@@ -8,6 +8,17 @@ const SOL_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
 
 const JUPITER_API_URL = 'https://public.api.mainnet-beta.solana.com';
 
+interface HeliusTransaction {
+    signature: string;
+    timestamp: number;
+    description?: string;
+    tokenTransfers?: any[];
+    tokenSymbol?: string;
+    events?: {
+        swap?: any;
+    };
+}
+
 const solPriceCache = new Map<string, number>();
 export async function getSolPrice(date: string): Promise<number> {
   if (solPriceCache.has(date)) {
@@ -34,13 +45,13 @@ export async function getSolPrice(date: string): Promise<number> {
   return 0;
 }
 
-export async function getEnhancedTransactions(address: string) {
+export async function getEnhancedTransactions(address: string): Promise<HeliusTransaction[]> {
     const apiKey = process.env.HELIUS_API_KEY;
     if (!apiKey) {
       throw new Error("Helius API key is not configured");
     }
   
-    const allNewTransactions: any[] = [];
+    const allNewTransactions: HeliusTransaction[] = [];
     let lastSignature: string | undefined;
     
     // Fetch transactions in batches until we find one we've already saved
@@ -88,7 +99,7 @@ export async function getEnhancedTransactions(address: string) {
         return [];
     }
 
-    return allNewTransactions.map((tx: any) => {
+    return allNewTransactions.map((tx: any): HeliusTransaction => {
         let tokenSymbol = 'Unknown';
         if (tx.events.swap) {
             const swap = tx.events.swap;

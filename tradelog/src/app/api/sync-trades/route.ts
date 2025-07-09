@@ -1,7 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { Trade } from '@/lib/types';
 
 export const dynamic = "force-dynamic";
+
+interface TokenTransfer {
+    mint: string;
+    tokenAmount: number;
+    fromUserAccount: string;
+    toUserAccount: string;
+}
+
+interface HeliusTransaction {
+    signature: string;
+    timestamp: number;
+    description?: string;
+    tokenTransfers?: TokenTransfer[];
+    tokenSymbol?: string;
+    events?: {
+        swap?: any;
+    };
+}
 
 // Fetches the Jupiter strict token list and creates a map for easy lookups.
 async function getTokenMap(): Promise<Map<string, { symbol: string; name: string; }>> {
@@ -117,14 +136,18 @@ export async function POST(req: NextRequest) {
             source: 'JUPITER',
             transaction_hash: trade.signature,
         };
-    }).filter(Boolean) as any[];
+    }).filter(Boolean) as Partial<Trade>[];
 
     if (tradesForDb.length === 0) {
         return NextResponse.json({ message: "No new valid trades to sync." });
     }
 
     // Fetch historical prices for all trades at once
-    const uniqueDates = [...new Set(tradesForDb.map(t => new Date(t.trade_date).toISOString().split('T')[0].split('-').reverse().join('-')))];
+    const uniqueDates = [...new Set(tradesForDb.map(t => {
+        const tradeDate = t.trade_date;
+        if (!tradeDate) return null;
+        return new Date(tradeDate).toISOString().split('T')[0].split('-').reverse().join('-');
+    }).filter(Boolean) as string[])];
 
     const pricePromises = uniqueDates.map(date => 
         getSolPrice(date).then(price => ({ date, price }))
@@ -137,18 +160,20 @@ export async function POST(req: NextRequest) {
     });
 
     const tradesWithUsdPrice = tradesForDb.map(trade => {
-        const date = new Date(trade.trade_date).toISOString().split('T')[0].split('-').reverse().join('-');
+        const tradeDate = trade.trade_date;
+        if (!tradeDate) return null;
+        const date = new Date(tradeDate).toISOString().split('T')[0].split('-').reverse().join('-');
         const solPriceUsd = priceMap.get(date) ?? 0;
 
-        const totalValueUsd = trade.total_value * solPriceUsd;
-        const priceUsd = trade.price * solPriceUsd;
+        const totalValueUsd = (trade.total_value || 0) * solPriceUsd;
+        const priceUsd = (trade.price || 0) * solPriceUsd;
 
         return {
             ...trade,
             price: priceUsd,
             total_value: totalValueUsd,
         };
-    });
+    }).filter(Boolean) as Partial<Trade>[];
 
     const { data, error } = await supabase
         .from('trades')
@@ -172,13 +197,13 @@ export async function POST(req: NextRequest) {
 }
 
 // Helius Enhanced Transactions API - Get transactions for a specific address
-async function getEnhancedTransactions(address: string, tokenMap: Map<string, { symbol: string; name: string; }>) {
+async function getEnhancedTransactions(address: string, tokenMap: Map<string, { symbol: string; name: string; }>): Promise<HeliusTransaction[]> {
     const apiKey = process.env.HELIUS_API_KEY;
     if (!apiKey) {
       throw new Error("Helius API key is not configured");
     }
   
-    const allNewTransactions: any[] = [];
+    const allNewTransactions: HeliusTransaction[] = [];
     let lastSignature: string | undefined;
     
     // Fetch transactions in batches until we find one we've already saved

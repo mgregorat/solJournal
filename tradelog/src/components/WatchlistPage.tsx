@@ -8,43 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Trash2, AlertTriangle, Bell, BellOff, ArrowUp, ArrowDown, Copy, Clock, RefreshCw } from 'lucide-react';
 import { toast } from "sonner";
 import { cn } from '@/lib/utils';
+import { TokenDetails, User } from '@/lib/types';
 
-interface WatchlistDbItem {
-  id: number;
-  user_id: number;
-  token_address: string;
-}
-
-interface WatchedToken {
-  mint: string;
-  symbol: string;
-  name: string;
-  price: number;
-  volume: number;
-  priceChange: number;
-  priceChanges?: {
-    '5m': number;
-    '1h': number;
-    '6h': number;
-    '24h': number;
-  };
-  liquidity: number;
-  marketCap: number;
-  imageUrl?: string;
-  pairAddress?: string;
-  dexId?: string;
-  url?: string;
-  alerts: {
-    priceChange?: {
-      percentage: number;
-      direction: 'up' | 'down';
-      isActive: boolean;
-    };
-    volumeSpike?: {
-      percentage: number;
-      isActive: boolean;
-    };
-  };
+interface WatchlistPageProps {
+    initialWatchlist: TokenDetails[];
+    dbUser: User | null;
 }
 
 type TimeFrame = '5m' | '1h' | '6h' | '24h';
@@ -60,11 +28,11 @@ const PriceChangeDisplay = ({
   token, 
   timeframe 
 }: { 
-  token: WatchedToken; 
+  token: TokenDetails; 
   timeframe: TimeFrame;
 }) => {
-  const change = token.priceChanges?.[timeframe] ?? token.priceChange;
-  const isPositive = change >= 0;
+  const change = token.priceChanges?.[timeframe] || token.priceChange;
+  const isPositive = change > 0;
   
   return (
     <div className={cn("flex items-center justify-end text-sm font-semibold", isPositive ? 'text-green-400' : 'text-red-400')}>
@@ -74,8 +42,8 @@ const PriceChangeDisplay = ({
   );
 };
 
-export const WatchlistPage = ({ initialWatchlist = [], dbUser }: { initialWatchlist: any[], dbUser: any }) => {
-  const [watchlist, setWatchlist] = useState<WatchedToken[]>(initialWatchlist);
+export const WatchlistPage = ({ initialWatchlist = [], dbUser }: WatchlistPageProps) => {
+  const [watchlist, setWatchlist] = useState<TokenDetails[]>(initialWatchlist);
   const [newMint, setNewMint] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -90,7 +58,7 @@ export const WatchlistPage = ({ initialWatchlist = [], dbUser }: { initialWatchl
     toast.success("Address copied to clipboard");
   };
 
-  const refreshTokenData = async (token: WatchedToken): Promise<WatchedToken | null> => {
+  const refreshTokenData = async (token: TokenDetails): Promise<TokenDetails | null> => {
     try {
       const response = await fetch(`/api/watchlist-token-details?mint=${token.mint}`);
       if (!response.ok) return null;
@@ -201,9 +169,11 @@ export const WatchlistPage = ({ initialWatchlist = [], dbUser }: { initialWatchl
   const toggleAlert = (mint: string, alertType: 'priceChange' | 'volumeSpike') => {
     setWatchlist(watchlist.map(token => {
       if (token.mint === mint) {
-        const alert = token.alerts[alertType];
-        if (alert) {
-          alert.isActive = !alert.isActive;
+        if (token.alerts) {
+          const alert = token.alerts[alertType];
+          if (alert) {
+            alert.isActive = !alert.isActive;
+          }
         }
       }
       return token;
@@ -342,13 +312,13 @@ export const WatchlistPage = ({ initialWatchlist = [], dbUser }: { initialWatchl
                     <div className="flex items-center space-x-4">
                     <div className="flex items-center space-x-2">
                         <Button variant="ghost" size="icon" onClick={() => toggleAlert(token.mint, 'priceChange')}>
-                            {token.alerts.priceChange?.isActive ? <Bell size={16} className="text-green-400" /> : <BellOff size={16} />}
+                            {token.alerts?.priceChange?.isActive ? <Bell size={16} className="text-green-400" /> : <BellOff size={16} />}
                         </Button>
                         <span className="text-sm">Price Alert</span>
                     </div>
                     <div className="flex items-center space-x-2">
                         <Button variant="ghost" size="icon" onClick={() => toggleAlert(token.mint, 'volumeSpike')}>
-                            {token.alerts.volumeSpike?.isActive ? <Bell size={16} className="text-green-400" /> : <BellOff size={16} />}
+                            {token.alerts?.volumeSpike?.isActive ? <Bell size={16} className="text-green-400" /> : <BellOff size={16} />}
                         </Button>
                         <span className="text-sm">Volume Alert</span>
                     </div>

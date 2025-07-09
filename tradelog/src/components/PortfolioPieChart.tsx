@@ -1,14 +1,18 @@
 "use client";
 
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-
-interface TokenHolding {
-  symbol?: string;
-  currentValueUSD?: number;
-}
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState } from 'react';
+import { Holding } from '@/lib/types';
 
 interface PortfolioPieChartProps {
-  holdings: TokenHolding[];
+    holdings: Holding[];
+}
+
+interface ChartData {
+    name: string;
+    value: number;
+    symbol: string;
 }
 
 const COLORS = [
@@ -29,50 +33,52 @@ const CustomTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-export const PortfolioPieChart = ({ holdings }: PortfolioPieChartProps) => {
-  const totalValue = holdings.reduce((acc, curr) => acc + (curr.currentValueUSD || 0), 0);
+export function PortfolioPieChart({ holdings }: PortfolioPieChartProps) {
+    const [chartType, setChartType] = useState<'pie' | 'bar'>('pie');
 
-  const processedHoldings = holdings
-    .filter(h => h.currentValueUSD && h.currentValueUSD > 0)
-    .sort((a, b) => (b.currentValueUSD || 0) - (a.currentValueUSD || 0));
+    const totalValue = holdings.reduce((acc, curr) => acc + (curr.currentValueUSD || 0), 0);
 
-  let chartData: { name: string, value: number, symbol: string }[] = [];
-  let otherValue = 0;
+    const processedHoldings = holdings
+      .filter(h => h.currentValueUSD && h.currentValueUSD > 0)
+      .sort((a, b) => (b.currentValueUSD || 0) - (a.currentValueUSD || 0));
 
-  if(totalValue > 0){
-    const mainHoldings = processedHoldings.filter(h => ((h.currentValueUSD || 0) / totalValue) * 100 >= 1);
-    const otherHoldings = processedHoldings.filter(h => ((h.currentValueUSD || 0) / totalValue) * 100 < 1);
-    
-    chartData = mainHoldings.map(h => ({
-      name: h.symbol || 'Unknown',
-      value: h.currentValueUSD || 0,
-      symbol: h.symbol || 'Unknown',
-    }));
+    let chartData: ChartData[] = [];
+    let otherValue = 0;
 
-    if (otherHoldings.length > 0) {
-      otherValue = otherHoldings.reduce((acc, curr) => acc + (curr.currentValueUSD || 0), 0);
-      chartData.push({
-        name: 'Other',
-        value: otherValue,
-        symbol: 'Other',
-      });
-    }
-  } else if (processedHoldings.length > 0) {
-    // Handle case where all holdings have some non-zero value but total is still near zero
-    chartData = processedHoldings.map(h => ({
+    if(totalValue > 0){
+      const mainHoldings = processedHoldings.filter(h => ((h.currentValueUSD || 0) / totalValue) * 100 >= 1);
+      const otherHoldings = processedHoldings.filter(h => ((h.currentValueUSD || 0) / totalValue) * 100 < 1);
+      
+      chartData = mainHoldings.map(h => ({
         name: h.symbol || 'Unknown',
         value: h.currentValueUSD || 0,
         symbol: h.symbol || 'Unknown',
-    }));
-  }
+      }));
 
-  if (chartData.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-48 text-gray-400">
-        <p>No data available for chart.</p>
-      </div>
-    );
-  }
+      if (otherHoldings.length > 0) {
+        otherValue = otherHoldings.reduce((acc, curr) => acc + (curr.currentValueUSD || 0), 0);
+        chartData.push({
+          name: 'Other',
+          value: otherValue,
+          symbol: 'Other',
+        });
+      }
+    } else if (processedHoldings.length > 0) {
+      // Handle case where all holdings have some non-zero value but total is still near zero
+      chartData = processedHoldings.map(h => ({
+          name: h.symbol || 'Unknown',
+          value: h.currentValueUSD || 0,
+          symbol: h.symbol || 'Unknown',
+      }));
+    }
+
+    if (chartData.length === 0) {
+      return (
+        <div className="flex items-center justify-center h-48 text-gray-400">
+          <p>No data available for chart.</p>
+        </div>
+      );
+    }
 
   return (
     <div style={{ width: '100%', height: 200 }}>

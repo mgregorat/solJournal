@@ -21,14 +21,20 @@ import TradeHistory from "@/components/TradeHistory";
 import { WatchlistPage } from "@/components/WatchlistPage";
 import { DailyPnlDisplay } from "@/components/DailyPnlDisplay";
 import { LoadingScreen } from "@/components/LoadingScreen";
+import { Trade, Holding } from "@/lib/types";
 
-export function DashboardClient({ initialHoldings, initialTrades }: { initialHoldings: any[] | null, initialTrades: any[] }) {
+interface DashboardClientProps {
+  initialHoldings: Holding[] | null;
+  initialTrades: Trade[];
+}
+
+export function DashboardClient({ initialHoldings, initialTrades }: DashboardClientProps) {
   const { publicKey, connected } = useWallet();
   const { user, authenticated } = usePrivy();
 
   const [dbUser, setDbUser] = useState<any>(null);
   const [wallets, setWallets] = useState<any[]>([]);
-  const [trades, setTrades] = useState<any[]>(initialTrades || []);
+  const [trades, setTrades] = useState<Trade[]>(initialTrades || []);
   const [watchlist, setWatchlist] = useState<any[]>([]);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
 
@@ -139,7 +145,7 @@ export function DashboardClient({ initialHoldings, initialTrades }: { initialHol
 
 
   const [activeItem, setActiveItem] = useState("Dashboard");
-  const [holdings, setHoldings] = useState<any[]>(initialHoldings || []);
+  const [holdings, setHoldings] = useState<Holding[]>(initialHoldings || []);
   const [isHoldingsLoading, setIsHoldingsLoading] = useState(false);
 
   const handleRefreshHoldings = async () => {

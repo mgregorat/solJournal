@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { Trade } from './types';
 
-export async function getTrades(walletAddress: string) {
+export async function getTrades(walletAddress: string): Promise<Trade[]> {
     if (!walletAddress) {
         return [];
     }
@@ -17,7 +18,7 @@ export async function getTrades(walletAddress: string) {
             throw new Error(error.message);
         }
 
-        return trades || [];
+        return trades as Trade[] || [];
     } catch (error: any) {
         console.error("Caught error in getTrades:", error);
         throw error;
