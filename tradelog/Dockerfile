@@ -23,6 +23,9 @@ RUN npm install --no-optional --no-fund --no-audit || \
     (echo "Retrying with scripts disabled..." && \
      npm install --no-optional --ignore-scripts --no-fund --no-audit)
 
+# Explicitly install critical build dependencies to ensure they're available
+RUN npm install autoprefixer postcss tailwindcss --no-save || echo "Build dependencies already installed"
+
 # Copy source code and configuration files
 COPY tradelog/src ./src
 COPY tradelog/public ./public
@@ -43,7 +46,9 @@ ENV NEXT_PUBLIC_HELIUS_API_KEY=${NEXT_PUBLIC_HELIUS_API_KEY}
 # Debug: Check if autoprefixer is installed
 RUN echo "Checking autoprefixer installation:" && \
     npm list autoprefixer || echo "autoprefixer not found" && \
-    echo "Contents of node_modules:" && ls -la node_modules/ | grep -E "(autoprefixer|postcss)"
+    echo "Contents of node_modules:" && ls -la node_modules/ | grep -E "(autoprefixer|postcss)" && \
+    echo "Checking if autoprefixer can be required:" && \
+    node -e "try { require('autoprefixer'); console.log('autoprefixer OK'); } catch(e) { console.log('autoprefixer ERROR:', e.message); }"
 
 # Debug: List directory contents
 RUN echo "Contents of /app:" && ls -la /app && \
