@@ -7,15 +7,9 @@ interface WatchlistItem {
     token_address: string;
 }
 
-const launchOptions = {
-    headless: true,
-    executablePath: '/usr/bin/chromium-browser',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-};
-
 async function fetchTokenDetails(mintAddress: string) {
     // This is the core logic from the watchlist-token-details route
-    const browser = await puppeteer.launch(launchOptions);
+    const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
     const page = await browser.newPage();
     try {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
