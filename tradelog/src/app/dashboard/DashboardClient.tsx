@@ -36,91 +36,89 @@ export function DashboardClient({ initialHoldings, initialTrades }: DashboardCli
   const [wallets, setWallets] = useState<any[]>([]);
   const [trades, setTrades] = useState<Trade[]>(initialTrades || []);
   const [watchlist, setWatchlist] = useState<any[]>([]);
+  const [holdings, setHoldings] = useState<Holding[]>(initialHoldings || []);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
 
-  // 1. Sync user with DB
+  // 1. Sync user and fetch their wallets
   useEffect(() => {
-    const syncUser = async () => {
+    const setupUser = async () => {
       if (authenticated && user) {
         try {
-          const response = await fetch('/api/users', {
+          // Sync user with DB
+          const userResponse = await fetch('/api/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ privy_did: user.id, email: user.email?.address }),
           });
-          if (response.ok) {
-            setDbUser(await response.json());
-          } else {
-            setIsInitialLoading(false); // Stop loading if user sync fails
+
+          if (!userResponse.ok) {
+            throw new Error('Failed to sync user');
           }
+          const syncedUser = await userResponse.json();
+          setDbUser(syncedUser);
+
+          // Fetch wallets for the synced user
+          const walletsResponse = await fetch(`/api/wallets?user_id=${syncedUser.id}`);
+          if (walletsResponse.ok) {
+            const userWallets = await walletsResponse.json();
+            setWallets(userWallets);
+          } else {
+             // If fetching wallets fails, we can assume there are none and stop loading
+            setIsInitialLoading(false);
+          }
+
         } catch (error) {
-          console.error('Error syncing user:', error);
+          console.error('Error during user setup:', error);
           setIsInitialLoading(false);
         }
-      } else if (!authenticated && !user) {
-        setIsInitialLoading(false); // Stop loading if user is not logged in
+      } else if (!user) {
+         // If there's no Privy user, we can stop loading.
+        setIsInitialLoading(false);
       }
     };
-    syncUser();
+    setupUser();
   }, [authenticated, user]);
-  
-  // 2. Initial data load
+
+  // 2. Fetch data once we have a user and wallets
   useEffect(() => {
     const loadInitialData = async () => {
-      if (dbUser && wallets.length > 0 && publicKey) {
-        setIsInitialLoading(true);
-        try {
-          const [tradesResponse, watchlistResponse, holdingsResponse] = await Promise.all([
-            fetch(`/api/trades?walletAddresses=${wallets.map(w => w.wallet_address).join(',')}`),
-            fetch(`/api/watchlist?user_id=${dbUser.id}`),
-            fetch('/api/refresh-holdings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
-            })
-          ]);
+        // This effect should only run when we have a user and at least one wallet,
+        // and a connected wallet in the browser.
+        if (dbUser && wallets.length > 0 && publicKey) {
+            try {
+                const walletAddresses = wallets.map(w => w.wallet_address).join(',');
+                const [tradesResponse, watchlistResponse, holdingsResponse] = await Promise.all([
+                    fetch(`/api/trades?walletAddresses=${walletAddresses}`),
+                    fetch(`/api/watchlist?user_id=${dbUser.id}`),
+                    fetch('/api/refresh-holdings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+                    })
+                ]);
 
-          if (tradesResponse.ok) setTrades(await tradesResponse.json());
-          if (watchlistResponse.ok) setWatchlist(await watchlistResponse.json());
-          if (holdingsResponse.ok) {
-            const data = await holdingsResponse.json();
-            setHoldings(data.holdings);
-          }
-          
-        } catch (error) {
-          console.error("Failed to load initial dashboard data", error);
-        } finally {
-          setIsInitialLoading(false);
+                if (tradesResponse.ok) setTrades(await tradesResponse.json());
+                if (watchlistResponse.ok) setWatchlist(await watchlistResponse.json());
+                if (holdingsResponse.ok) {
+                    const data = await holdingsResponse.json();
+                    setHoldings(data.holdings);
+                }
+            } catch (error) {
+                console.error("Failed to load initial dashboard data", error);
+            } finally {
+                setIsInitialLoading(false);
+            }
+        } else if (dbUser) {
+            // If the user is loaded but has no wallets or none connected, stop loading.
+            setIsInitialLoading(false);
         }
-      }
     };
 
-    if (wallets.length > 0) {
-        loadInitialData();
-    } else if (dbUser && wallets.length === 0) {
-        // If user has no wallets, there's nothing to load, so stop loading
-        setIsInitialLoading(false);
-    }
+    loadInitialData();
   }, [dbUser, wallets, publicKey]);
 
-  // 3. Fetch user's wallets
-  useEffect(() => {
-    const fetchWallets = async () => {
-      if (dbUser) {
-        try {
-          const response = await fetch(`/api/wallets?user_id=${dbUser.id}`);
-          if (response.ok) {
-            setWallets(await response.json());
-          }
-        } catch (error) {
-          console.error('Error fetching wallets:', error);
-        }
-      }
-    };
-    fetchWallets();
-  }, [dbUser]);
 
-  // 4. Save newly connected wallet
+  // 3. Save newly connected wallet (no change needed here)
   useEffect(() => {
     const saveWallet = async () => {
       if (connected && publicKey && dbUser) {
@@ -145,7 +143,6 @@ export function DashboardClient({ initialHoldings, initialTrades }: DashboardCli
 
 
   const [activeItem, setActiveItem] = useState("Dashboard");
-  const [holdings, setHoldings] = useState<Holding[]>(initialHoldings || []);
   const [isHoldingsLoading, setIsHoldingsLoading] = useState(false);
 
   const handleRefreshHoldings = async () => {
