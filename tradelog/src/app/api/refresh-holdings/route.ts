@@ -11,16 +11,14 @@ export async function POST(req: NextRequest) {
 
         const { fetchHoldings, fetchSOLBalance } = await import('@/lib/puppeteer-fetch');
         
-        const [holdingsData, solBalanceData] = await Promise.allSettled([
-            fetchHoldings(walletAddress),
-            fetchSOLBalance(walletAddress)
-        ]);
+        // Fetch holdings and SOL balance sequentially to prevent crashes
+        const holdingsData = await fetchHoldings(walletAddress);
+        const solBalanceData = await fetchSOLBalance(walletAddress);
 
         let enrichedHoldings: Holding[] = [];
-        if (holdingsData.status === 'fulfilled' && holdingsData.value && 
-            holdingsData.value.code === 0 && holdingsData.value.data && holdingsData.value.data.holdings) {
+        if (holdingsData && holdingsData.code === 0 && holdingsData.data && holdingsData.data.holdings) {
             
-            const rawHoldings = holdingsData.value.data.holdings;
+            const rawHoldings = holdingsData.data.holdings;
             const currentHoldings = rawHoldings.filter((holding: any) => parseFloat(holding.balance) > 1e-9);
 
             enrichedHoldings = currentHoldings.map((holding: any): Holding => {
@@ -42,8 +40,8 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        if (solBalanceData.status === 'fulfilled' && solBalanceData.value && solBalanceData.value.sol_balance > 0) {
-            const solBalance = solBalanceData.value;
+        if (solBalanceData && solBalanceData.sol_balance > 0) {
+            const solBalance = solBalanceData;
             const solHolding: Holding = {
                 mint: 'So11111111111111111111111111111111111111112',
                 amount: solBalance.sol_balance,

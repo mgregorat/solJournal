@@ -93,10 +93,14 @@ export async function GET(request: Request) {
         // Type assertion to ensure proper typing
         const typedWatchlistItems = watchlistItems as WatchlistItem[];
 
-        // Fetch details for all tokens in parallel
-        const detailedWatchlist = await Promise.all(
-            typedWatchlistItems.map(item => fetchTokenDetails(item.token_address))
-        );
+        // Fetch details for all tokens sequentially to avoid overloading the server
+        const detailedWatchlist = [];
+        for (const item of typedWatchlistItems) {
+            const details = await fetchTokenDetails(item.token_address);
+            if (details) {
+                detailedWatchlist.push(details);
+            }
+        }
 
         // Filter out any tokens for which details couldn't be fetched
         const successfulItems = detailedWatchlist.filter(Boolean);
