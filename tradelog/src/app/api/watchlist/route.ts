@@ -103,13 +103,26 @@ export async function GET(request: Request) {
         if (error) throw error;
 
         const typedWatchlistItems = watchlistItems as WatchlistItem[];
+        
+        // --- BATCH PROCESSING LOGIC ---
+        // We process the tokens in small batches to avoid overwhelming the server
+        // with too many concurrent Puppeteer pages.
+        const BATCH_SIZE = 3;
+        const allFetchedItems = [];
 
-        // Restore parallel fetching - it's fast and safe with a single browser instance
-        const detailedWatchlist = await Promise.all(
-            typedWatchlistItems.map(item => fetchTokenDetails(item.token_address))
-        );
+        console.log(`Fetching details for ${typedWatchlistItems.length} watchlist items in batches of ${BATCH_SIZE}...`);
 
-        const successfulItems = detailedWatchlist.filter(Boolean);
+        for (let i = 0; i < typedWatchlistItems.length; i += BATCH_SIZE) {
+            const batch = typedWatchlistItems.slice(i, i + BATCH_SIZE);
+            console.log(`Processing batch #${(i / BATCH_SIZE) + 1}...`);
+            
+            const batchPromises = batch.map(item => fetchTokenDetails(item.token_address));
+            const batchResults = await Promise.all(batchPromises);
+            
+            allFetchedItems.push(...batchResults);
+        }
+
+        const successfulItems = allFetchedItems.filter(Boolean);
 
         return NextResponse.json(successfulItems);
     } catch (error: any) {
