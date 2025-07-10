@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
-import puppeteer from 'puppeteer';
+import { getBrowser } from '@/lib/browser'; // Use the shared browser instance
 
 // Define types for the watchlist items
 interface WatchlistItem {
@@ -9,29 +9,41 @@ interface WatchlistItem {
 
 const getLaunchOptions = () => {
     const isProduction = process.env.NODE_ENV === 'production';
+    const options = {
+        headless: true,
+        protocolTimeout: 90000, // Increase timeout to 90 seconds
+    };
+
     if (isProduction) {
         return {
-            headless: true,
+            ...options,
             executablePath: '/usr/bin/chromium-browser',
             args: ['--no-sandbox', '--disable-setuid-sandbox']
         };
     }
-    // For local development
+    
     return { headless: true };
 };
 
 
 async function fetchTokenDetails(mintAddress: string) {
-    // This is the core logic from the watchlist-token-details route
-    const browser = await puppeteer.launch(getLaunchOptions());
-    const page = await browser.newPage();
+    const browser = await getBrowser();
+    const page = await browser.newPage(); // Use a new page from the shared browser
     try {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         const dexScreenerUrl = `https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`;
+        
+        // Use page.evaluate to perform the fetch inside the browser context
         const data = await page.evaluate(async (url) => {
-            const response = await fetch(url);
-            if (!response.ok) return null;
-            return await response.json();
+            try {
+                const response = await fetch(url);
+                if (!response.ok) return null;
+                return await response.json();
+            } catch (e) {
+                // Errors inside evaluate don't bubble up well, so log them here
+                console.error(`Error fetching from inside browser context for ${url}:`, e);
+                return null;
+            }
         }, dexScreenerUrl);
 
         if (!data || !data.pairs || data.pairs.length === 0) return null;
@@ -69,7 +81,7 @@ async function fetchTokenDetails(mintAddress: string) {
         console.error(`Error fetching details for ${mintAddress}:`, error);
         return null;
     } finally {
-        await browser.close();
+        await page.close(); // Close the page, not the browser
     }
 }
 
@@ -90,19 +102,13 @@ export async function GET(request: Request) {
 
         if (error) throw error;
 
-        // Type assertion to ensure proper typing
         const typedWatchlistItems = watchlistItems as WatchlistItem[];
 
-        // Fetch details for all tokens sequentially to avoid overloading the server
-        const detailedWatchlist = [];
-        for (const item of typedWatchlistItems) {
-            const details = await fetchTokenDetails(item.token_address);
-            if (details) {
-                detailedWatchlist.push(details);
-            }
-        }
+        // Restore parallel fetching - it's fast and safe with a single browser instance
+        const detailedWatchlist = await Promise.all(
+            typedWatchlistItems.map(item => fetchTokenDetails(item.token_address))
+        );
 
-        // Filter out any tokens for which details couldn't be fetched
         const successfulItems = detailedWatchlist.filter(Boolean);
 
         return NextResponse.json(successfulItems);
