@@ -2,7 +2,12 @@ import 'server-only';
 import puppeteer, { Browser } from 'puppeteer-core';
 import { executablePath } from 'puppeteer';
 
-let browser: Browser | null = null;
+// To share a single browser instance across serverless function invocations,
+// we attach it to the `global` object. This is a best-practice for
+// resource management in a Next.js/Vercel/Railway serverless environment.
+declare global {
+    var _browser: Browser | null;
+}
 
 const getLaunchOptions = () => {
     const isProduction = process.env.NODE_ENV === 'production';
@@ -22,23 +27,26 @@ const getLaunchOptions = () => {
 };
 
 export async function getBrowser(): Promise<Browser> {
-    if (browser && browser.isConnected()) {
-        return browser;
+    // Use the cached browser instance if it exists and is connected.
+    if (global._browser && global._browser.isConnected()) {
+        return global._browser;
     }
 
-    console.log("🚀 Launching new browser instance...");
+    console.log("🚀 Launching new GLOBAL browser instance...");
     try {
-        browser = await puppeteer.launch(getLaunchOptions());
-        console.log("✅ Browser launched successfully.");
+        // Launch a new browser and cache it on the global object.
+        global._browser = await puppeteer.launch(getLaunchOptions());
+        console.log("✅ Global browser launched successfully.");
 
-        browser.on('disconnected', () => {
-            console.log("Browser disconnected. Cleaning up.");
-            browser = null;
+        global._browser.on('disconnected', () => {
+            console.log("Browser disconnected. Cleaning up global instance.");
+            global._browser = null;
         });
 
-        return browser;
+        return global._browser;
     } catch (error) {
         console.error("Failed to launch browser:", error);
+        global._browser = null; // Clean up on failure
         throw new Error("Could not initialize browser instance.");
     }
 } 
