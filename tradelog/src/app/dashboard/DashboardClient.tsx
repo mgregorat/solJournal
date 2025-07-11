@@ -28,98 +28,71 @@ interface DashboardClientProps {
   initialTrades: Trade[];
 }
 
-export function DashboardClient({ initialHoldings, initialTrades }: DashboardClientProps) {
+export function DashboardClient({ initialTrades: propInitialTrades, initialHoldings: propInitialHoldings }: any) {
   const { publicKey, connected } = useWallet();
   const { user, authenticated } = usePrivy();
 
   const [dbUser, setDbUser] = useState<any>(null);
   const [wallets, setWallets] = useState<any[]>([]);
-  const [trades, setTrades] = useState<Trade[]>(initialTrades || []);
+  const [trades, setTrades] = useState<Trade[]>(propInitialTrades || []);
   const [watchlist, setWatchlist] = useState<any[]>([]);
-  const [holdings, setHoldings] = useState<Holding[]>(initialHoldings || []);
+  const [holdings, setHoldings] = useState<Holding[]>(propInitialHoldings || []);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
 
   const walletAddress = publicKey?.toBase58();
 
-  // 1. Sync user and fetch their wallets
+  // Effect to sync the user with the database
   useEffect(() => {
-    const setupUser = async () => {
+    const syncUser = async () => {
       if (authenticated && user) {
         try {
-          // Sync user with DB
-          const userResponse = await fetch('/api/users', {
+          const response = await fetch('/api/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ privy_did: user.id, email: user.email?.address }),
           });
-
-          if (!userResponse.ok) {
-            throw new Error('Failed to sync user');
+          if (response.ok) {
+            const syncedUser = await response.json();
+            setDbUser(syncedUser);
+            const walletsResponse = await fetch(`/api/wallets?user_id=${syncedUser.id}`);
+            if (walletsResponse.ok) setWallets(await walletsResponse.json());
           }
-          const syncedUser = await userResponse.json();
-          setDbUser(syncedUser);
-
-          // Fetch wallets for the synced user
-          const walletsResponse = await fetch(`/api/wallets?user_id=${syncedUser.id}`);
-          if (walletsResponse.ok) {
-            const userWallets = await walletsResponse.json();
-            setWallets(userWallets);
-          } else {
-             // If fetching wallets fails, we can assume there are none and stop loading
-            setIsInitialLoading(false);
-          }
-
         } catch (error) {
-          console.error('Error during user setup:', error);
+          console.error('Error syncing user:', error);
+        }
+      }
+    };
+    syncUser();
+  }, [authenticated, user]);
+
+  // Main data fetching effect, now calls the single master endpoint
+  useEffect(() => {
+    const loadDashboardData = async () => {
+      if (dbUser?.id && publicKey) {
+        setIsInitialLoading(true);
+        try {
+          const url = `/api/dashboard-data?user_id=${dbUser.id}&walletAddress=${publicKey.toBase58()}`;
+          const response = await fetch(url);
+          if (response.ok) {
+            const data = await response.json();
+            setHoldings(data.holdings || []);
+            setWatchlist(data.watchlist || []);
+            setTrades(data.trades || []);
+          } else {
+            console.error("Failed to fetch dashboard data:", response.statusText);
+          }
+        } catch (error) {
+          console.error("Error fetching dashboard data:", error);
+        } finally {
           setIsInitialLoading(false);
         }
-      } else if (!user) {
-         // If there's no Privy user, we can stop loading.
+      } else if (authenticated) {
+        // If logged in but no wallet connected, stop loading.
         setIsInitialLoading(false);
       }
     };
-    setupUser();
-  }, [authenticated, user]);
-
-  // 2. Fetch data once we have a user and wallets
-  useEffect(() => {
-    const loadInitialData = async () => {
-        // This effect should only run when we have a user and at least one wallet,
-        // and a connected wallet in the browser.
-        if (dbUser && wallets.length > 0 && publicKey) {
-            try {
-                const walletAddresses = wallets.map(w => w.wallet_address).join(',');
-                
-                // Fetch holdings, trades, and watchlist data.
-                const [tradesResponse, watchlistResponse, holdingsResponse] = await Promise.all([
-                    fetch(`/api/trades?walletAddresses=${walletAddresses}`),
-                    fetch(`/api/watchlist?user_id=${dbUser.id}`),
-                    fetch(`/api/refresh-holdings`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
-                    })
-                ]);
-
-                if (tradesResponse.ok) setTrades(await tradesResponse.json());
-                if (watchlistResponse.ok) setWatchlist(await watchlistResponse.json());
-                if (holdingsResponse.ok) {
-                    const data = await holdingsResponse.json();
-                    setHoldings(data.holdings);
-                }
-            } catch (error) {
-                console.error("Failed to load initial dashboard data", error);
-            } finally {
-                setIsInitialLoading(false);
-            }
-        } else if (dbUser) {
-            // If the user is loaded but has no wallets or none connected, stop loading.
-            setIsInitialLoading(false);
-        }
-    };
-
-    loadInitialData();
-  }, [dbUser, wallets, publicKey]);
+    loadDashboardData();
+  }, [dbUser, publicKey]); // Depends on user and connected wallet
 
   // 3. Save newly connected wallet (no change needed here)
   useEffect(() => {
@@ -148,25 +121,28 @@ export function DashboardClient({ initialHoldings, initialTrades }: DashboardCli
   const [activeItem, setActiveItem] = useState("Dashboard");
   const [isHoldingsLoading, setIsHoldingsLoading] = useState(false);
 
+  // Updated manual refresh handler to use the new master endpoint
   const handleRefreshHoldings = async () => {
-    if (!publicKey) return;
+    if (!dbUser?.id || !publicKey) return;
 
+    console.log("Manual refresh triggered. Fetching all dashboard data...");
     setIsHoldingsLoading(true);
     try {
-      const response = await fetch('/api/refresh-holdings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to refresh holdings.');
+      const url = `/api/dashboard-data?user_id=${dbUser.id}&walletAddress=${publicKey.toBase58()}`;
+      const response = await fetch(url);
+      
+      if (response.ok) {
+        const data = await response.json();
+        setHoldings(data.holdings || []);
+        // We could also update trades and watchlist here if needed
+        // setWatchlist(data.watchlist || []);
+        // setTrades(data.trades || []);
+        console.log("Manual refresh successful.");
+      } else {
+        throw new Error('Failed to refresh dashboard data.');
       }
-      setHoldings(data.holdings);
     } catch (error: any) {
       console.error(error.message);
-      // You could add a toast notification here to inform the user of the error
     } finally {
       setIsHoldingsLoading(false);
     }
