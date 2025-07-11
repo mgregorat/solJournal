@@ -15,15 +15,26 @@ const getLaunchOptions = () => {
         headless: true,
         protocolTimeout: 90000,
     };
+    
+    const args = isProduction 
+        ? ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
+        : [];
+
+    // --- PROXY CONFIGURATION ---
+    const { PROXY_HOST, PROXY_PORT } = process.env;
+    if (PROXY_HOST && PROXY_PORT) {
+        console.log(`🚀 Using proxy server: ${PROXY_HOST}:${PROXY_PORT}`);
+        args.push(`--proxy-server=${PROXY_HOST}:${PROXY_PORT}`);
+    }
 
     if (isProduction) {
         return {
             ...baseOptions,
             executablePath: '/usr/bin/chromium-browser',
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            args,
         };
     }
-    return { ...baseOptions, executablePath: executablePath() };
+    return { ...baseOptions, executablePath: executablePath(), args };
 };
 
 export async function getBrowser(): Promise<Browser> {

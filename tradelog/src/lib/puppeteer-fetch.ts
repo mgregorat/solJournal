@@ -6,6 +6,12 @@ export async function fetchHoldings(walletAddress: string) {
 
     const browser = await getBrowser();
     const page = await browser.newPage();
+    
+    const { PROXY_USERNAME, PROXY_PASSWORD } = process.env;
+    if (PROXY_USERNAME && PROXY_PASSWORD) {
+        await page.authenticate({ username: PROXY_USERNAME, password: PROXY_PASSWORD });
+    }
+
     try {
         await page.setUserAgent(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
@@ -29,6 +35,12 @@ export async function fetchSOLBalance(walletAddress: string) {
 
     const browser = await getBrowser();
     const page = await browser.newPage();
+
+    const { PROXY_USERNAME, PROXY_PASSWORD } = process.env;
+    if (PROXY_USERNAME && PROXY_PASSWORD) {
+        await page.authenticate({ username: PROXY_USERNAME, password: PROXY_PASSWORD });
+    }
+
     try {
         await page.setExtraHTTPHeaders({
             'Accept': 'application/json, text/plain, */*',

@@ -29,6 +29,12 @@ const getLaunchOptions = () => {
 async function fetchTokenDetails(mintAddress: string) {
     const browser = await getBrowser();
     const page = await browser.newPage(); // Use a new page from the shared browser
+
+    const { PROXY_USERNAME, PROXY_PASSWORD } = process.env;
+    if (PROXY_USERNAME && PROXY_PASSWORD) {
+        await page.authenticate({ username: PROXY_USERNAME, password: PROXY_PASSWORD });
+    }
+    
     try {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         const dexScreenerUrl = `https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`;
