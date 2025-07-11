@@ -22,7 +22,6 @@ import { WatchlistPage } from "@/components/WatchlistPage";
 import { DailyPnlDisplay } from "@/components/DailyPnlDisplay";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { Trade, Holding } from "@/lib/types";
-import useSWR from "swr";
 
 interface DashboardClientProps {
   initialHoldings: Holding[] | null;
