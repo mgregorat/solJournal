@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { getBrowser } from '@/lib/browser';
 import { fetchHoldings, fetchSOLBalance } from '@/lib/puppeteer-fetch';
 import { Trade } from '@/lib/types';
+import { Holding } from '@/lib/types';
 
 // Helper function to fetch watchlist details (adapted from the original watchlist route)
 async function getWatchlistDetails(userId: string) {
@@ -61,15 +62,34 @@ async function getWatchlistDetails(userId: string) {
     }
 }
 
-// Helper to fetch trades (non-puppeteer)
-async function getTrades(walletAddresses: string) {
-    const { data, error } = await supabaseAdmin.from('trades').select('*').in('wallet_address', walletAddresses.split(','));
+// Helper to get user's wallets
+async function getWallets(userId: string) {
+    const { data, error } = await supabaseAdmin
+        .from('wallets')
+        .select('*')
+        .eq('user_id', userId);
+    if (error) {
+        console.error("Error fetching wallets:", error);
+        return [];
+    }
+    return data;
+}
+
+// Helper to get user's trades
+async function getTrades(userId: string) {
+    const { data, error } = await supabaseAdmin
+        .from('trades')
+        .select('*')
+        .eq('user_id', userId)
+        .order('trade_date', { ascending: false });
+
     if (error) {
         console.error("Error fetching trades:", error);
         return [];
     }
-    return data as Trade[];
+    return data;
 }
+
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
@@ -81,16 +101,15 @@ export async function GET(request: Request) {
     }
 
     try {
-        // All data fetching is now orchestrated here
-        const [holdingsResult, solBalanceResult, watchlistResult, tradesResult] = await Promise.allSettled([
+        const [holdingsResult, solBalanceResult, watchlistResult, walletsResult, tradesResult] = await Promise.allSettled([
             fetchHoldings(walletAddress),
             fetchSOLBalance(walletAddress),
             getWatchlistDetails(userId),
-            getTrades(walletAddress)
+            getWallets(userId),
+            getTrades(userId),
         ]);
 
-        // Process holdings and SOL balance
-        let enrichedHoldings: any[] = [];
+        let enrichedHoldings: Holding[] = [];
         if (holdingsResult.status === 'fulfilled' && holdingsResult.value?.data?.holdings) {
             const rawHoldings = holdingsResult.value.data.holdings;
             enrichedHoldings = rawHoldings
@@ -115,7 +134,8 @@ export async function GET(request: Request) {
         return NextResponse.json({
             holdings: enrichedHoldings,
             watchlist: watchlistResult.status === 'fulfilled' ? watchlistResult.value : [],
-            trades: tradesResult.status === 'fulfilled' ? tradesResult.value : []
+            wallets: walletsResult.status === 'fulfilled' ? walletsResult.value : [],
+            trades: tradesResult.status === 'fulfilled' ? tradesResult.value : [],
         });
 
     } catch (error: any) {
