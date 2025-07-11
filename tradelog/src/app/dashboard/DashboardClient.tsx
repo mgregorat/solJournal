@@ -22,6 +22,7 @@ import { WatchlistPage } from "@/components/WatchlistPage";
 import { DailyPnlDisplay } from "@/components/DailyPnlDisplay";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { Trade, Holding } from "@/lib/types";
+import useSWR from "swr";
 
 interface DashboardClientProps {
   initialHoldings: Holding[] | null;
@@ -38,6 +39,8 @@ export function DashboardClient({ initialHoldings, initialTrades }: DashboardCli
   const [watchlist, setWatchlist] = useState<any[]>([]);
   const [holdings, setHoldings] = useState<Holding[]>(initialHoldings || []);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
+
+  const walletAddress = publicKey?.toBase58();
 
   // 1. Sync user and fetch their wallets
   useEffect(() => {
@@ -87,10 +90,12 @@ export function DashboardClient({ initialHoldings, initialTrades }: DashboardCli
         if (dbUser && wallets.length > 0 && publicKey) {
             try {
                 const walletAddresses = wallets.map(w => w.wallet_address).join(',');
+                
+                // Fetch holdings, trades, and watchlist data.
                 const [tradesResponse, watchlistResponse, holdingsResponse] = await Promise.all([
                     fetch(`/api/trades?walletAddresses=${walletAddresses}`),
                     fetch(`/api/watchlist?user_id=${dbUser.id}`),
-                    fetch('/api/refresh-holdings', {
+                    fetch(`/api/refresh-holdings`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
@@ -116,7 +121,6 @@ export function DashboardClient({ initialHoldings, initialTrades }: DashboardCli
 
     loadInitialData();
   }, [dbUser, wallets, publicKey]);
-
 
   // 3. Save newly connected wallet (no change needed here)
   useEffect(() => {

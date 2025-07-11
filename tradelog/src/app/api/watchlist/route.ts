@@ -26,70 +26,7 @@ const getLaunchOptions = () => {
 };
 
 
-async function fetchTokenDetails(mintAddress: string) {
-    const browser = await getBrowser();
-    const page = await browser.newPage(); // Use a new page from the shared browser
-
-    const { PROXY_USERNAME, PROXY_PASSWORD } = process.env;
-    if (PROXY_USERNAME && PROXY_PASSWORD) {
-        await page.authenticate({ username: PROXY_USERNAME, password: PROXY_PASSWORD });
-    }
-    
-    try {
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-        const dexScreenerUrl = `https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`;
-        
-        // Use page.evaluate to perform the fetch inside the browser context
-        const data = await page.evaluate(async (url) => {
-            try {
-                const response = await fetch(url);
-                if (!response.ok) return null;
-                return await response.json();
-            } catch (e) {
-                // Errors inside evaluate don't bubble up well, so log them here
-                console.error(`Error fetching from inside browser context for ${url}:`, e);
-                return null;
-            }
-        }, dexScreenerUrl);
-
-        if (!data || !data.pairs || data.pairs.length === 0) return null;
-
-        const pair = data.pairs[0];
-        if (!pair || !pair.baseToken) return null;
-
-        const priceChanges = {
-            '5m': parseFloat(pair.priceChange?.m5 || '0'),
-            '1h': parseFloat(pair.priceChange?.h1 || '0'),
-            '6h': parseFloat(pair.priceChange?.h6 || '0'),
-            '24h': parseFloat(pair.priceChange?.h24 || '0')
-        };
-
-        return {
-            mint: mintAddress,
-            symbol: pair.baseToken.symbol || 'Unknown',
-            name: pair.baseToken.name || 'Unknown',
-            price: parseFloat(pair.priceUsd || '0'),
-            volume: parseFloat(pair.volume?.h24 || '0'),
-            priceChange: priceChanges['24h'],
-            priceChanges: priceChanges,
-            liquidity: parseFloat(pair.liquidity?.usd || '0'),
-            marketCap: parseFloat(pair.marketCap || pair.fdv || '0'),
-            imageUrl: pair.info?.imageUrl || null,
-            pairAddress: pair.pairAddress,
-            dexId: pair.dexId,
-            url: pair.url,
-            alerts: {
-                priceChange: { percentage: 10, direction: 'up', isActive: false },
-                volumeSpike: { percentage: 50, isActive: false },
-            }
-        };
-    } catch (error) {
-        console.error(`Error fetching details for ${mintAddress}:`, error);
-        return null;
-    } finally {
-        await page.close(); // Close the page, not the browser
-    }
-}
+// The fetchTokenDetails function is no longer needed, we'll do this in the GET handler.
 
 // GET /api/watchlist?user_id=...
 export async function GET(request: Request) {
@@ -109,28 +46,77 @@ export async function GET(request: Request) {
         if (error) throw error;
 
         const typedWatchlistItems = watchlistItems as WatchlistItem[];
+        const mints = typedWatchlistItems.map(item => item.token_address);
         
-        // --- BATCH PROCESSING LOGIC ---
-        // We process the tokens in small batches to avoid overwhelming the server
-        // with too many concurrent Puppeteer pages.
-        const BATCH_SIZE = 3;
-        const allFetchedItems = [];
-
-        console.log(`Fetching details for ${typedWatchlistItems.length} watchlist items in batches of ${BATCH_SIZE}...`);
-
-        for (let i = 0; i < typedWatchlistItems.length; i += BATCH_SIZE) {
-            const batch = typedWatchlistItems.slice(i, i + BATCH_SIZE);
-            console.log(`Processing batch #${(i / BATCH_SIZE) + 1}...`);
-            
-            const batchPromises = batch.map(item => fetchTokenDetails(item.token_address));
-            const batchResults = await Promise.all(batchPromises);
-            
-            allFetchedItems.push(...batchResults);
+        if (mints.length === 0) {
+            return NextResponse.json([]);
         }
 
-        const successfulItems = allFetchedItems.filter(Boolean);
+        // --- HIGH-PERFORMANCE BROWSER FETCH ---
+        // We create ONE page to handle all fetches in parallel inside the browser.
+        const browser = await getBrowser();
+        const page = await browser.newPage();
 
-        return NextResponse.json(successfulItems);
+        const { PROXY_USERNAME, PROXY_PASSWORD } = process.env;
+        if (PROXY_USERNAME && PROXY_PASSWORD) {
+            await page.authenticate({ username: PROXY_USERNAME, password: PROXY_PASSWORD });
+        }
+
+        try {
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+            const allTokensData = await page.evaluate(async (mintsToFetch) => {
+                const promises = mintsToFetch.map(mint => 
+                    fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`)
+                        .then(res => res.ok ? res.json() : null)
+                        .catch(() => null) // Catch fetch errors for individual tokens
+                );
+                return Promise.all(promises);
+            }, mints);
+            
+            // Now, process the results from the browser on our server
+            const successfulItems = allTokensData.map((data, index) => {
+                if (!data || !data.pairs || data.pairs.length === 0) return null;
+
+                const pair = data.pairs[0];
+                if (!pair || !pair.baseToken) return null;
+
+                const priceChanges = {
+                    '5m': parseFloat(pair.priceChange?.m5 || '0'),
+                    '1h': parseFloat(pair.priceChange?.h1 || '0'),
+                    '6h': parseFloat(pair.priceChange?.h6 || '0'),
+                    '24h': parseFloat(pair.priceChange?.h24 || '0')
+                };
+
+                return {
+                    mint: mints[index],
+                    symbol: pair.baseToken.symbol || 'Unknown',
+                    name: pair.baseToken.name || 'Unknown',
+                    price: parseFloat(pair.priceUsd || '0'),
+                    volume: parseFloat(pair.volume?.h24 || '0'),
+                    priceChange: priceChanges['24h'],
+                    priceChanges: priceChanges,
+                    liquidity: parseFloat(pair.liquidity?.usd || '0'),
+                    marketCap: parseFloat(pair.marketCap || pair.fdv || '0'),
+                    imageUrl: pair.info?.imageUrl || null,
+                    pairAddress: pair.pairAddress,
+                    dexId: pair.dexId,
+                    url: pair.url,
+                    alerts: {
+                        priceChange: { percentage: 10, direction: 'up', isActive: false },
+                        volumeSpike: { percentage: 50, isActive: false },
+                    }
+                };
+            }).filter(Boolean); // Filter out any nulls from failed fetches
+
+            return NextResponse.json(successfulItems);
+
+        } catch(e) {
+            console.error('Error during page evaluation:', e);
+            throw e; // Let the main error handler catch it
+        } finally {
+            await page.close();
+        }
     } catch (error: any) {
         console.error('Watchlist GET Error:', error);
         return NextResponse.json({ error: 'Failed to fetch watchlist' }, { status: 500 });
