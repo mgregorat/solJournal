@@ -84,21 +84,36 @@ export async function POST(request: Request) {
         waitUntil: 'domcontentloaded',
       });
       
-      console.log('✅ Fetching data from gmgn.ai...');
-      const jsonData = await page.evaluate(async (url) => {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-      }, scraperUrl);
+      console.log('✅ Fetching all trade data from gmgn.ai with pagination...');
+      let allTrades: any[] = [];
+      let nextCursor: string | null = null;
 
-      const trades = jsonData?.data?.activities || [];
-      if (trades.length === 0) {
+      do {
+        const urlWithCursor: string = nextCursor ? `${scraperUrl}&cursor=${nextCursor}` : scraperUrl;
+        console.log(`Fetching page with cursor: ${nextCursor || 'initial'}`);
+
+        const jsonData: any = await page.evaluate(async (url) => {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return await res.json();
+        }, urlWithCursor);
+
+        const trades = jsonData?.data?.activities || [];
+        if (trades.length > 0) {
+          allTrades = allTrades.concat(trades);
+        }
+        
+        nextCursor = jsonData?.data?.next;
+
+      } while (nextCursor);
+
+      if (allTrades.length === 0) {
         return NextResponse.json({ message: 'No new trades found on gmgn.ai.', synced: 0 });
       }
 
-      console.log(`✅ Found ${trades.length} trades. Syncing to database...`);
+      console.log(`✅ Found a total of ${allTrades.length} trades across all pages. Syncing to database...`);
       
-      const recordsToInsert = trades.map((trade: any) => ({
+      const recordsToInsert = allTrades.map((trade: any) => ({
         user_id: userId,
         wallet_address: walletAddress,
         tx_hash: trade.tx_hash,
