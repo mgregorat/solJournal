@@ -7,7 +7,7 @@ import Sidebar from "@/components/Sidebar";
 import { HoldingsPage } from "@/components/HoldingsPage";
 import { Dashboard } from "@/components/Dashboard";
 import { WalletConnection } from "@/components/WalletConnection";
-import TradeHistory from "@/components/TradeHistory";
+import { JournalPage } from "@/components/JournalPage";
 import { WatchlistPage } from "@/components/WatchlistPage";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { Trade, Holding } from "@/lib/types";
@@ -28,61 +28,52 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeItem, setActiveItem] = useState("Dashboard");
 
-  // Effect to sync user with the database. Runs only when auth state changes.
+  // Combined effect for authentication, user sync, and data loading.
   useEffect(() => {
-    const syncUser = async () => {
-      if (authenticated && user) {
-        try {
-          const response = await fetch('/api/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ privy_did: user.id, email: user.email?.address }),
-          });
-          if (response.ok) {
-            const syncedUser = await response.json();
-            setDbUser(syncedUser);
-          } else {
-            console.error("Failed to sync user.");
-          }
-        } catch (error) {
-          console.error("Error syncing user:", error);
-        }
+    const initialize = async () => {
+      // Step 1: Wait for authentication and user object.
+      if (!authenticated || !user || !publicKey) {
+        // If not ready, stop loading and wait for user interaction.
+        if (authenticated) setIsLoading(false);
+        return;
       }
-    };
-    syncUser();
-  }, [authenticated, user]);
 
+      setIsLoading(true);
 
-  // Effect to fetch dashboard data. Runs when we have a user and a connected wallet.
-  useEffect(() => {
-    const loadDashboardData = async () => {
-      if (dbUser?.id && publicKey) {
-        setIsLoading(true);
-        try {
-          const url = `/api/dashboard-data?user_id=${dbUser.id}&walletAddress=${publicKey.toBase58()}`;
-          const response = await fetch(url);
+      try {
+        // Step 2: Sync user with our database.
+        const userResponse = await fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ privy_did: user.id, email: user.email?.address }),
+        });
 
-          if (response.ok) {
-            const data = await response.json();
-            setHoldings(data.holdings || []);
-            setWatchlist(data.watchlist || []);
-            setTrades(data.trades || []);
-            setWallets(data.wallets || []);
-          } else {
-            console.error("Failed to fetch dashboard data:", response.statusText);
-          }
-        } catch (error) {
-          console.error("Error fetching dashboard data:", error);
-        } finally {
-          setIsLoading(false);
-        }
-      } else if (authenticated) {
-        // If logged in but no wallet, stop loading and wait for connection.
+        if (!userResponse.ok) throw new Error("Failed to sync user.");
+        
+        const syncedUser = await userResponse.json();
+        setDbUser(syncedUser);
+
+        // Step 3: Fetch all dashboard data in one go.
+        const dataUrl = `/api/dashboard-data?user_id=${syncedUser.id}&walletAddress=${publicKey.toBase58()}`;
+        const dataResponse = await fetch(dataUrl);
+
+        if (!dataResponse.ok) throw new Error("Failed to fetch dashboard data.");
+
+        const data = await dataResponse.json();
+        setHoldings(data.holdings || []);
+        setWatchlist(data.watchlist || []);
+        setTrades(data.trades || []);
+        setWallets(data.wallets || []);
+
+      } catch (error) {
+        console.error("Initialization error:", error);
+      } finally {
         setIsLoading(false);
       }
     };
-    loadDashboardData();
-  }, [dbUser, publicKey, authenticated]);
+
+    initialize();
+  }, [authenticated, user, publicKey]);
 
 
   const handleRefreshHoldings = async () => {
@@ -123,7 +114,7 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
     
     switch (activeItem) {
       case "Journal":
-        return <TradeHistory initialTrades={trades} />;
+        return <JournalPage initialTrades={trades} dbUser={dbUser} wallets={wallets} activeWalletAddress={publicKey?.toBase58()} />;
       case "Holdings":
         return <HoldingsPage holdings={holdings} isLoading={isRefreshing} onRefresh={handleRefreshHoldings} walletAddress={publicKey?.toBase58()} />;
       case "Watchlist":
