@@ -1,56 +1,67 @@
-export type Trade = {
-  id: number;
+export interface Holding {
+  mint: string;
+  amount: number;
+  decimals: number;
+  symbol: string;
+  name: string;
+  logoURI?: string;
+  currentPrice: number;
+  currentValueUSD: number;
+  avgEntryPrice?: number;
+  totalCostBasis?: number;
+  unrealizedPnL?: number;
+  pnlPercentage?: number;
+  isNativeSOL?: boolean;
+}
+
+export interface Trade {
+  id?: number;
   user_id: string;
   wallet_address: string;
-  token_symbol: string;
-  token_address: string;
-  trade_type: "buy" | "sell";
-  amount: number;
-  price: number;
-  total_value: number;
+  tx_hash: string;
   trade_date: string;
-  notes?: string;
-  emotion_tags?: string[];
-  setup_id?: number;
-  source?: string;
-  transaction_hash?: string;
-  created_at: string;
-  updated_at?: string;
-};
-
-export interface Setup {
-    id: number;
-    user_id: string;
-    name: string;
-    description: string;
-    created_at: string;
+  event_type: 'buy' | 'sell';
+  token_address: string;
+  token_symbol: string;
+  token_logo?: string;
+  token_amount: number;
+  quote_token_address?: string;
+  quote_token_symbol?: string;
+  quote_amount: number;
+  cost_usd: number;
+  price_usd: number;
+  gas_usd?: number;
+  source: string;
+  raw_data?: any;
 }
 
-export interface Metrics {
-    walletValue: number;
-    allTimePnl: number;
-    dailyPnl: number;
-    dailyPnlPercentage: number;
+export interface JournalEvent {
+  id: string;
+  status: 'CLOSED' | 'OPEN';
+  token_symbol: string;
+  token_logo?: string;
+  token_address: string;
+  date: string;
+  sell_value_usd?: number;
+  cost_basis_usd?: number;
+  realized_pnl_usd?: number;
+  realized_pnl_percent?: number;
+  sell_tx_hash?: string;
+  held_amount?: number;
+  avg_buy_price?: number;
+  total_cost?: number;
+  current_price?: number;
+  current_value_usd?: number;
+  unrealized_pnl_usd?: number;
+  unrealized_pnl_percent?: number;
+  notes?: string | null;
+  tags?: string[];
+  is_flagged?: boolean;
 }
 
-export interface Holding {
-    mint: string;
-    amount: number;
-    decimals: number;
-    symbol?: string;
-    name?: string;
-    logoURI?: string;
-    currentPrice?: number;
-    currentValueUSD?: number;
-    currentValueSOL?: number;
-    avgEntryPrice?: number;
-    totalCostBasis?: number;
-    firstBuyDate?: string;
-    unrealizedPnL?: number;
-    pnlPercentage?: number;
-    sparklineData?: number[];
-    isNativeSOL?: boolean;
-    historicalValueUSD?: number;
+export interface JournalPageProps {
+  journalEvents: JournalEvent[];
+  dbUser?: any;
 }
 
 export interface User {

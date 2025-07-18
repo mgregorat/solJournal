@@ -24,6 +24,7 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
   const [trades, setTrades] = useState<Trade[]>(propInitialTrades || []);
   const [watchlist, setWatchlist] = useState<any[]>([]);
   const [holdings, setHoldings] = useState<Holding[]>(propInitialHoldings || []);
+  const [journalEvents, setJournalEvents] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeItem, setActiveItem] = useState("Dashboard");
@@ -33,7 +34,6 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
     const initialize = async () => {
       // Step 1: Wait for authentication and user object.
       if (!authenticated || !user || !publicKey) {
-        // If not ready, stop loading and wait for user interaction.
         if (authenticated) setIsLoading(false);
         return;
       }
@@ -41,7 +41,6 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
       setIsLoading(true);
 
       try {
-        // Step 2: Sync user with our database.
         const userResponse = await fetch('/api/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -53,17 +52,26 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
         const syncedUser = await userResponse.json();
         setDbUser(syncedUser);
 
-        // Step 3: Fetch all dashboard data in one go.
-        const dataUrl = `/api/dashboard-data?user_id=${syncedUser.id}&walletAddress=${publicKey.toBase58()}`;
-        const dataResponse = await fetch(dataUrl);
+        const walletAddress = publicKey.toBase58();
+        
+        // Sync journal first to ensure data is fresh before fetching
+        await fetch('/api/journal/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: syncedUser.id, walletAddress }),
+        });
 
-        if (!dataResponse.ok) throw new Error("Failed to fetch dashboard data.");
+        // Fetch all dashboard data in parallel
+        const [dashboardData, journalData] = await Promise.all([
+          fetch(`/api/dashboard-data?user_id=${syncedUser.id}&walletAddress=${walletAddress}`).then(res => res.json()),
+          fetch(`/api/journal-activity?userId=${syncedUser.id}&walletAddress=${walletAddress}`).then(res => res.json())
+        ]);
 
-        const data = await dataResponse.json();
-        setHoldings(data.holdings || []);
-        setWatchlist(data.watchlist || []);
-        setTrades(data.trades || []);
-        setWallets(data.wallets || []);
+        setHoldings(dashboardData.holdings || []);
+        setWatchlist(dashboardData.watchlist || []);
+        setTrades(dashboardData.trades || []);
+        setWallets(dashboardData.wallets || []);
+        setJournalEvents(journalData || []);
 
       } catch (error) {
         console.error("Initialization error:", error);
@@ -114,7 +122,7 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
     
     switch (activeItem) {
       case "Journal":
-        return <JournalPage initialTrades={trades} dbUser={dbUser} wallets={wallets} activeWalletAddress={publicKey?.toBase58()} />;
+        return <JournalPage journalEvents={journalEvents} dbUser={dbUser} />;
       case "Holdings":
         return <HoldingsPage holdings={holdings} isLoading={isRefreshing} onRefresh={handleRefreshHoldings} walletAddress={publicKey?.toBase58()} />;
       case "Watchlist":

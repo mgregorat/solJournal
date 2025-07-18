@@ -21,6 +21,7 @@ interface JournalEvent {
   current_value_usd?: number;
   unrealized_pnl_usd?: number;
   unrealized_pnl_percent?: number;
+  tags?: string[];
 }
 
 export async function GET(request: Request) {
@@ -121,6 +122,14 @@ export async function GET(request: Request) {
         }
 
         const sortedEvents = journalEvents.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        // Ensure tags are always an array
+        sortedEvents.forEach(event => {
+          if (!event.tags) {
+            event.tags = [];
+          }
+        });
+
         return NextResponse.json(sortedEvents);
 
     } catch (error: any) {
