@@ -1,35 +1,27 @@
-import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { supabase } from '@/app/lib/supabase';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function PATCH(request: Request) {
+export async function PATCH(req: NextRequest) {
+  const { tx_hash, is_flagged, userId } = await req.json();
+
+  if (!userId || !tx_hash) {
+    return NextResponse.json({ error: 'Missing userId or transaction hash' }, { status: 400 });
+  }
+
   try {
-    const { tx_hash, is_flagged, userId } = await request.json();
-
-    if (tx_hash === undefined || is_flagged === undefined || userId === undefined) {
-      return NextResponse.json({ error: 'Transaction hash, flagged status, and user ID are required' }, { status: 400 });
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from('synced_trades')
-      .update({ is_flagged })
-      .eq('tx_hash', tx_hash)
-      .eq('user_id', userId)
-      .select()
-      .single();
+    const { data, error } = await supabase
+      .from('journal_entries')
+      .upsert({ tx_hash: tx_hash, user_id: userId, is_flagged: is_flagged }, { onConflict: 'user_id,tx_hash' })
+      .select();
 
     if (error) {
-      console.error('Failed to update flag status in Supabase:', error);
-      if (error.code === 'PGRST116') {
-        return NextResponse.json({ error: 'Trade not found or user does not have permission to edit.' }, { status: 404 });
-      }
+      console.error('Error in flag upsert:', error);
       throw error;
     }
 
-    console.log(`Flag status updated for trade ${tx_hash}`);
-    return NextResponse.json({ message: 'Flag status updated successfully.', data });
-
+    return NextResponse.json({ message: 'Flag updated successfully', data });
   } catch (error: any) {
-    console.error(`An error occurred while updating flag status:`, error);
-    return NextResponse.json({ error: 'Failed to update flag status', details: error.message }, { status: 500 });
+    console.error('Error updating flag:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 } 

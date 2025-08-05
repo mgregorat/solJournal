@@ -54,14 +54,19 @@ export interface JournalEvent {
   current_value_usd?: number;
   unrealized_pnl_usd?: number;
   unrealized_pnl_percent?: number;
-  notes?: string | null;
+  notes?: string;
   tags?: string[];
   is_flagged?: boolean;
+  what_went_well?: string;
+  what_went_wrong?: string;
+  what_will_i_do_differently?: string;
+  is_journaled?: boolean;
+  journal_entry_id?: number;
 }
 
 export interface JournalPageProps {
   journalEvents: JournalEvent[];
-  dbUser?: any;
+  dbUser?: User;
 }
 
 export interface User {
