@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { Trade } from '@/lib/types';
+import { isTradeJournaled } from '@/lib/utils'; // Make sure this is imported
 
 export const dynamic = 'force-dynamic';
 
@@ -97,7 +98,7 @@ export async function GET(request: Request) {
 
         const tradesWithJournalData = trades.map(t => {
             const journalEntry = journalMap[t.tx_hash as string];
-            return {
+            const enrichedTrade = {
                 ...t,
                 notes: journalEntry?.notes,
                 tags: journalEntry?.tags || [],
@@ -106,8 +107,13 @@ export async function GET(request: Request) {
                 what_went_well: journalEntry?.what_went_well,
                 what_went_wrong: journalEntry?.what_went_wrong,
                 what_will_i_do_differently: journalEntry?.what_will_i_do_differently,
-                is_journaled: !!journalEntry,
+                is_journaled: false // Default to false
             };
+
+            // Use the new, stricter definition of "journaled"
+            enrichedTrade.is_journaled = isTradeJournaled(enrichedTrade);
+            
+            return enrichedTrade;
         }) as EnrichedTrade[];
 
         const tradesWithNotesCount = tradesWithJournalData.filter(t => t.notes).length;
