@@ -2,10 +2,11 @@ import 'server-only';
 import { getBrowser } from './browser';
 
 export async function fetchHoldings(walletAddress: string) {
-    const URL = `https://gmgn.ai/api/v1/wallet_holdings/sol/${walletAddress}?device_id=797ada39-37b1-46c2-8e8a-f813ac27ebad&client_id=gmgn_web_20250630-556-4ee1d1a&from_app=gmgn&app_ver=20250630-556-4ee1d1a&tz_name=America%2FNew_York&tz_offset=-14400&app_lang=en-US&fp_did=ffaa653dc5d83387b22ee019166ad927&os=web&limit=50&orderby=last_active_timestamp&direction=desc&showsmall=true&sellout=true&hide_airdrop=false&tx30d=true`;
+    const URL = `https://gmgn.ai/pf/api/v1/wallet/sol/${walletAddress}/holdings?device_id=797ada39-37b1-46c2-8e8a-f813ac27ebad&fp_did=ffaa653dc5d83387b22ee019166ad927&client_id=gmgn_web_20260207-10838-e0410a3&from_app=gmgn&app_ver=20260207-10838-e0410a3&tz_name=America%2FNew_York&tz_offset=-18000&app_lang=en-US&os=web&worker=0&limit=50&order_by=last_active_timestamp&direction=desc&hide_airdrop=false&hide_abnormal=false&hide_closed=true&sellout=true&showsmall=true`;
 
     const browser = await getBrowser();
     const page = await browser.newPage();
+    
     
     const { PROXY_USERNAME, PROXY_PASSWORD } = process.env;
     if (PROXY_USERNAME && PROXY_PASSWORD) {
@@ -16,7 +17,9 @@ export async function fetchHoldings(walletAddress: string) {
         await page.setUserAgent(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
         );
-        await page.goto(URL, { waitUntil: 'domcontentloaded' });
+        // First, navigate to a legitimate page on the domain.
+        await page.goto('https://gmgn.ai/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+        // Then, fetch the API data from within the browser context.
         const data = await page.evaluate(async (url) => {
             const res = await fetch(url);
             return await res.json();
@@ -48,9 +51,15 @@ export async function fetchSOLBalance(walletAddress: string) {
             'Referer': 'https://solscan.io/',
             'Origin': 'https://solscan.io'
         });
-        await page.goto(URL, { waitUntil: 'domcontentloaded' });
+        // First, navigate to the base Solscan site to establish context
+        await page.goto('https://solscan.io/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+        // Then, use evaluate to fetch the data from the API endpoint
         const data = await page.evaluate(async (url) => {
-            const res = await fetch(url);
+            const res = await fetch(url, { 
+                headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                }
+            });
             if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
             return await res.json();
         }, URL);
@@ -82,4 +91,4 @@ export async function fetchSOLBalance(walletAddress: string) {
     } finally {
         await page.close();
     }
-} 
+}

@@ -61,16 +61,31 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
           body: JSON.stringify({ userId: syncedUser.id, walletAddress }),
         });
 
-        // Fetch all dashboard data in parallel
+        // Fetch all dashboard data in parallel with individual error handling
+        const dashboardDataPromise = fetch(`/api/dashboard-data?user_id=${syncedUser.id}&walletAddress=${walletAddress}`)
+          .then(res => res.json())
+          .catch(err => {
+            console.error("Error fetching dashboard data:", err);
+            return null; // Return null on error to avoid crashing Promise.all
+          });
+
+        const journalDataPromise = fetch(`/api/journal-activity?userId=${syncedUser.id}&walletAddress=${walletAddress}`)
+          .then(res => res.json())
+          .catch(err => {
+            console.error("Error fetching journal data:", err);
+            return null; // Return null on error
+          });
+
         const [dashboardData, journalData] = await Promise.all([
-          fetch(`/api/dashboard-data?user_id=${syncedUser.id}&walletAddress=${walletAddress}`).then(res => res.json()),
-          fetch(`/api/journal-activity?userId=${syncedUser.id}&walletAddress=${walletAddress}`).then(res => res.json())
+          dashboardDataPromise,
+          journalDataPromise
         ]);
 
-        setHoldings(dashboardData.holdings || []);
-        setWatchlist(dashboardData.watchlist || []);
-        setTrades(dashboardData.trades || []);
-        setWallets(dashboardData.wallets || []);
+        // Now, safely set the state
+        setHoldings(dashboardData?.holdings || []);
+        setWatchlist(dashboardData?.watchlist || []);
+        setTrades(dashboardData?.trades || []);
+        setWallets(dashboardData?.wallets || []);
         setJournalEvents(journalData || []);
 
       } catch (error) {

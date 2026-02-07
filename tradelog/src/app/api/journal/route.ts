@@ -1,58 +1,28 @@
-import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 
-export async function PATCH(request: Request) {
+export async function DELETE(request: Request) {
   try {
-    const body = await request.json();
-    const {
-      tx_hash,
-      userId,
-      notes,
-      tags,
-      what_went_well,
-      what_went_wrong,
-      what_will_i_do_differently,
-    } = body;
+    const { tx_hash, userId } = await request.json();
 
-    console.log(`[JOURNAL SAVE] Saving entry for userId: ${userId}, tx_hash: ${tx_hash}`);
-    console.log(`[JOURNAL SAVE] Notes: "${notes}"`);
-
-    if (!userId || !tx_hash) {
-      return NextResponse.json({ error: 'Missing required fields: userId and tx_hash' }, { status: 400 });
+    if (!tx_hash || !userId) {
+      return NextResponse.json({ error: 'tx_hash and userId are required' }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('journal_entries')
-      .upsert(
-        {
-          user_id: userId,
-          tx_hash: tx_hash,
-          notes: notes,
-          tags: tags,
-          what_went_well: what_went_well,
-          what_went_wrong: what_went_wrong,
-          what_will_i_do_differently: what_will_i_do_differently,
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: 'user_id, tx_hash',
-        }
-      )
-      .select();
+      .delete()
+      .eq('tx_hash', tx_hash)
+      .eq('user_id', userId);
 
     if (error) {
-      console.error('[JOURNAL SAVE] Supabase error:', error);
-      return NextResponse.json({ error: 'Failed to save journal entry', details: error.message }, { status: 500 });
+      console.error('Supabase delete error:', error);
+      return NextResponse.json({ error: 'Failed to delete journal entry' }, { status: 500 });
     }
 
-    console.log(`[JOURNAL SAVE] Successfully saved entry:`, data);
-    
-    // Add a small delay to ensure database consistency before responding
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    return NextResponse.json({ message: 'Journal entry saved successfully', data }, { status: 200 });
-  } catch (e) {
-    console.error('API error:', e);
-    return NextResponse.json({ error: 'An unexpected error occurred', details: e.message }, { status: 500 });
+    return NextResponse.json({ message: 'Journal entry deleted successfully' });
+  } catch (error) {
+    console.error('Request error:', error);
+    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
   }
-} 
+}

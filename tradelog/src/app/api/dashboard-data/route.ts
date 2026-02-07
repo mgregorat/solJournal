@@ -110,17 +110,25 @@ export async function GET(request: Request) {
         ]);
 
         let enrichedHoldings: Holding[] = [];
-        if (holdingsResult.status === 'fulfilled' && holdingsResult.value?.data?.holdings) {
-            const rawHoldings = holdingsResult.value.data.holdings;
-            enrichedHoldings = rawHoldings
-                .filter((h: any) => parseFloat(h.balance) > 1e-9)
-                .map((h: any) => ({
-                    mint: h.token.address, amount: parseFloat(h.balance), decimals: h.token.decimals,
-                    symbol: h.token.symbol, name: h.token.name, logoURI: h.token.logo,
-                    currentPrice: parseFloat(h.price), currentValueUSD: parseFloat(h.usd_value),
-                    avgEntryPrice: parseFloat(h.avg_cost), totalCostBasis: parseFloat(h.cost),
-                    unrealizedPnL: parseFloat(h.unrealized_profit), pnlPercentage: parseFloat(h.unrealized_pnl) * 100
-                }));
+        if (holdingsResult.status === 'fulfilled') {
+            console.log('Successfully fetched holdings data:', JSON.stringify(holdingsResult.value, null, 2));
+
+            const rawHoldings = holdingsResult.value?.data?.holdings;
+            if (rawHoldings && Array.isArray(rawHoldings)) {
+                enrichedHoldings = rawHoldings
+                    .filter((h: any) => parseFloat(h.balance) > 1e-9)
+                    .map((h: any) => ({
+                        mint: h.token.address, amount: parseFloat(h.balance), decimals: h.token.decimals,
+                        symbol: h.token.symbol, name: h.token.name, logoURI: h.token.logo,
+                        currentPrice: parseFloat(h.price), currentValueUSD: parseFloat(h.usd_value),
+                        avgEntryPrice: parseFloat(h.avg_cost), totalCostBasis: parseFloat(h.cost),
+                        unrealizedPnL: parseFloat(h.unrealized_profit), pnlPercentage: parseFloat(h.unrealized_pnl) * 100
+                    }));
+            } else {
+                console.log('Holdings data is not in the expected format or is empty.');
+            }
+        } else {
+            console.error('Failed to fetch holdings:', holdingsResult.reason);
         }
         if (solBalanceResult.status === 'fulfilled' && solBalanceResult.value) {
             enrichedHoldings.unshift({

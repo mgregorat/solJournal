@@ -37,15 +37,36 @@ const getLaunchOptions = () => {
     return { ...baseOptions, executablePath: executablePath(), args };
 };
 
-export async function getBrowser(): Promise<Browser> {
-    // Use the cached browser instance if it exists and is connected.
-    if (global._browser && global._browser.isConnected()) {
-        return global._browser;
+async function isBrowserHealthy(browser: Browser): Promise<boolean> {
+    try {
+        // A simple check: can we open a new page?
+        const page = await browser.newPage();
+        await page.close();
+        return true;
+    } catch (e) {
+        console.warn("Browser health check failed.", e);
+        return false;
     }
+}
 
+export async function getBrowser(): Promise<Browser> {
+    if (global._browser && global._browser.isConnected()) {
+        // Add a health check before returning the cached instance
+        if (await isBrowserHealthy(global._browser)) {
+            return global._browser;
+        }
+        console.log("Browser failed health check. Closing and relaunching.");
+        try {
+            await global._browser.close();
+        } catch (e) {
+            console.error("Error closing unhealthy browser instance:", e);
+        }
+        global._browser = null;
+    }
+    
+    // If we're here, we need a new browser
     console.log("🚀 Launching new GLOBAL browser instance...");
     try {
-        // Launch a new browser and cache it on the global object.
         global._browser = await puppeteer.launch(getLaunchOptions());
         console.log("✅ Global browser launched successfully.");
 
@@ -57,7 +78,7 @@ export async function getBrowser(): Promise<Browser> {
         return global._browser;
     } catch (error) {
         console.error("Failed to launch browser:", error);
-        global._browser = null; // Clean up on failure
+        global._browser = null;
         throw new Error("Could not initialize browser instance.");
     }
 } 
