@@ -490,21 +490,19 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
 
   useEffect(() => {
     const fetchAndMergeData = async () => {
-      if (!authenticated || !privyUser || !publicKey) {
+      if (!publicKey) {
         return;
       }
 
       try {
-        // Step 1: Get User ID
-        const userResponse = await fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ privy_did: privyUser.id, email: privyUser.email?.address }),
-        });
-        if (!userResponse.ok) throw new Error("Failed to sync user.");
-        const syncedUser = await userResponse.json();
-        setDbUser(syncedUser); 
-        const userId = syncedUser.id;
+        const userId = dbUser?.id;
+        if (!userId) {
+            // Handle case where dbUser is not yet available.
+            // Maybe fetch it here if not present, or wait.
+            // For now, let's assume it should be present.
+            console.log("User not available yet, skipping data fetch.");
+            return;
+        }
         const walletAddress = publicKey.toBase58();
 
         // Step 2: Fetch both trade events and journal entries in parallel
@@ -525,20 +523,21 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
 
         // Step 4: Merge the data and sort by date descending
         const mergedEvents = tradeEvents.map((event) => {
-          const journalEntry = journalMap.get(event.id);
-
-          if (journalEntry) {
-            return {
-              ...event,
-              notes: journalEntry.notes,
-              tags: journalEntry.tags,
-              is_flagged: journalEntry.is_flagged,
-              what_went_well: journalEntry.what_went_well,
-              what_went_wrong: journalEntry.what_went_wrong,
-              what_will_i_do_differently: journalEntry.what_will_i_do_differently,
-              is_journaled: true, // Explicitly mark as journaled
-              journal_updated_at: journalEntry.updated_at, // Add journal timestamp
-            };
+          if (event.transaction_hash) {
+            const journalEntry = journalMap.get(event.transaction_hash);
+            if (journalEntry) {
+              return {
+                ...event,
+                notes: journalEntry.notes,
+                tags: journalEntry.tags,
+                is_flagged: journalEntry.is_flagged,
+                what_went_well: journalEntry.what_went_well,
+                what_went_wrong: journalEntry.what_went_wrong,
+                what_will_i_do_differently: journalEntry.what_will_i_do_differently,
+                is_journaled: true, // Explicitly mark as journaled
+                journal_updated_at: journalEntry.updated_at, // Add journal timestamp
+              };
+            }
           }
           // Return the original event if no journal entry is found
           return { ...event, is_journaled: false };
@@ -555,8 +554,10 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
       }
     };
 
-    fetchAndMergeData();
-  }, [authenticated, privyUser, publicKey]);
+    if (dbUser) { // Run only when dbUser is available
+        fetchAndMergeData();
+    }
+  }, [dbUser, publicKey]);
 
   const groupedAndFilteredEvents = useMemo(() => {
     let events = journalEvents;
@@ -589,6 +590,8 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
   }, [journalEvents, selectedTags, tradeType, showFlaggedOnly, activeTab, hideJournaled, journaledTrades, notJournaledTrades]);
 
   const handleReflectionSave = async (updatedEvent: JournalEvent) => {
+    if (!updatedEvent.transaction_hash) return;
+
     const updatedEventWithTimestamp = { ...updatedEvent, journal_updated_at: new Date().toISOString() };
     
     setJournalEvents(prev => prev.map(e => e.id === updatedEvent.id ? updatedEventWithTimestamp : e)
@@ -600,8 +603,9 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     setViewingEvent(updatedEventWithTimestamp);
 
     const journalData = {
-      tx_hash: updatedEvent.id,
+      tx_hash: updatedEvent.transaction_hash,
       userId: dbUser?.id,
+      walletId: updatedEvent.wallet_id,
       notes: updatedEvent.notes,
       tags: updatedEvent.tags,
       what_went_well: updatedEvent.what_went_well,
@@ -610,7 +614,7 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     };
 
     try {
-      const response = await fetch('/api/journal/', {
+      const response = await fetch('/api/journal/flag', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(journalData),
@@ -619,7 +623,8 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
       if (!response.ok) {
         const errorData = await response.json();
         console.error('Failed to save reflection:', errorData);
-        setJournalEvents(prev => prev.map(e => e.id === updatedEvent.id ? { ...e, ...updatedEvent } : e));
+        // Revert on failure
+        setJournalEvents(prev => prev.map(e => e.id === updatedEvent.id ? updatedEvent : e));
       } else {
         const savedData = await response.json();
         const newJournalEntry = savedData.data[0];
@@ -636,16 +641,18 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
       }
     } catch (error) {
       console.error('An error occurred while saving the reflection:', error);
-       setJournalEvents(prev => prev.map(e => e.id === updatedEvent.id ? { ...e, ...updatedEvent } : e));
+       // Revert on failure
+       setJournalEvents(prev => prev.map(e => e.id === updatedEvent.id ? updatedEvent : e));
     }
   };
 
   const handleSave = async () => {
-    if (!selectedEvent) return;
+    if (!selectedEvent || !selectedEvent.transaction_hash) return;
 
     const journalData = {
-      tx_hash: selectedEvent.id,
+      tx_hash: selectedEvent.transaction_hash,
       userId: dbUser?.id,
+      walletId: selectedEvent.wallet_id,
       notes: editingNotes,
       tags: editingTags,
       what_went_well: editingWhatWentWell,
@@ -654,7 +661,7 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     };
 
     try {
-      const response = await fetch('/api/journal/', {
+      const response = await fetch('/api/journal/flag', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(journalData),
@@ -688,8 +695,6 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
           const dateB = b.journal_updated_at ? new Date(b.journal_updated_at) : new Date(b.date);
           return dateB.getTime() - dateA.getTime();
       }));
-
-      // Note: The local state is already updated above, so the change should be visible immediately
       
       setSelectedEvent(null);
       setEditingNotes('');
@@ -750,6 +755,12 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
 
   const handleToggleFlag = async (event: React.MouseEvent, trade: JournalEvent) => {
     event.stopPropagation();
+
+    if (!trade.transaction_hash) {
+      console.warn("Attempted to flag an open position. This is not allowed.");
+      return;
+    }
+
     const newFlaggedState = !trade.is_flagged;
     
     setJournalEvents(prev => prev.map(e => e.id === trade.id ? { ...e, is_flagged: newFlaggedState } : e));
@@ -758,7 +769,12 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
       await fetch('/api/journal/flag', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tx_hash: trade.id, is_flagged: newFlaggedState, userId: dbUser?.id }),
+        body: JSON.stringify({ 
+          tx_hash: trade.transaction_hash, 
+          is_flagged: newFlaggedState, 
+          userId: dbUser?.id,
+          walletId: trade.wallet_id,
+        }),
       });
     } catch (error) {
       console.error('Failed to update flag status:', error);

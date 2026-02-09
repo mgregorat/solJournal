@@ -16,9 +16,10 @@ export interface Holding {
 
 export interface Trade {
   id?: number;
-  user_id: string;
-  wallet_address: string;
-  tx_hash: string;
+  user_id: number;
+  wallet_address: string; // Will be removed in a future migration
+  wallet_id?: number; // Temporarily optional
+  transaction_hash: string;
   trade_date: string;
   event_type: 'buy' | 'sell';
   token_address: string;
@@ -36,7 +37,8 @@ export interface Trade {
 }
 
 export interface JournalEvent {
-  id: string;
+  id: string; // tx_hash for CLOSED, token_address for OPEN
+  transaction_hash?: string;  // actual on-chain tx hash for CLOSED trades
   status: 'CLOSED' | 'OPEN';
   token_symbol: string;
   token_logo?: string;
@@ -62,6 +64,8 @@ export interface JournalEvent {
   what_will_i_do_differently?: string;
   is_journaled?: boolean;
   journal_entry_id?: number;
+  journal_updated_at?: string;
+  wallet_id?: number; // Temporarily optional
 }
 
 export interface JournalPageProps {
@@ -70,7 +74,7 @@ export interface JournalPageProps {
 }
 
 export interface User {
-    id: string;
+    id: number;
     email?: string;
     created_at: string;
     updated_at?: string;
@@ -78,7 +82,7 @@ export interface User {
 
 export interface Wallet {
     id: number;
-    user_id: string;
+    user_id: number;
     wallet_address: string;
     created_at: string;
     updated_at?: string;
@@ -86,7 +90,7 @@ export interface Wallet {
 
 export interface WatchlistItem {
     id: number;
-    user_id: string;
+    user_id: number;
     token_address: string;
     created_at: string;
 }

@@ -4,6 +4,8 @@ import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import fs from 'fs';
 import path from 'path';
 
+import { getOrCreateWalletId } from '@/app/lib/walletUtils';
+
 function getGmgnConfig() {
   const configPath = path.join(process.cwd(), 'tradelog', 'gmgn_config.json');
   if (fs.existsSync(configPath)) {
@@ -33,18 +35,18 @@ export async function POST(request: Request) {
       console.error('Validation Error: userId or walletAddress missing.', { userId, walletAddress });
       return NextResponse.json({ error: 'userId and walletAddress are required' }, { status: 400 });
     }
+    
+    const walletId = await getOrCreateWalletId(userId, walletAddress);
 
     // Step 1: Check the last sync time for the wallet
     const { data: walletData, error: walletError } = await supabaseAdmin
       .from('wallets')
       .select('last_synced_at')
-      .eq('user_id', userId)
-      .eq('wallet_address', walletAddress)
+      .eq('id', walletId)
       .single();
 
-    if (walletError) {
+    if (walletError && walletError.code !== 'PGRST116') {
       console.error('Error fetching wallet sync time:', walletError);
-      // If the wallet isn't found, we can proceed, but it's good to be aware.
     }
 
     let lastSyncedAt: Date | null = null;
@@ -115,8 +117,9 @@ export async function POST(request: Request) {
       
       const recordsToInsert = allTrades.map((trade: any) => ({
         user_id: userId,
+        wallet_id: walletId,
         wallet_address: walletAddress,
-        tx_hash: trade.tx_hash,
+        transaction_hash: trade.tx_hash,
         trade_date: new Date(trade.timestamp * 1000), // Convert from seconds to ms
         event_type: trade.event_type,
         token_address: trade.token.address,
@@ -134,8 +137,8 @@ export async function POST(request: Request) {
       }));
 
       const { data, error } = await supabaseAdmin
-        .from('synced_trades')
-        .upsert(recordsToInsert, { onConflict: 'tx_hash', ignoreDuplicates: true })
+        .from('trades')
+        .upsert(recordsToInsert, { onConflict: 'wallet_id,transaction_hash', ignoreDuplicates: false })
         .select();
 
       if (error) {
@@ -147,7 +150,7 @@ export async function POST(request: Request) {
       const { error: updateError } = await supabaseAdmin
         .from('wallets')
         .update({ last_synced_at: new Date().toISOString() })
-        .eq('wallet_address', walletAddress);
+        .eq('id', walletId);
       
       if (updateError) {
         console.error('Failed to update last_synced_at:', updateError);

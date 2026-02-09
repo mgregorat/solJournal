@@ -120,6 +120,26 @@ $$ language 'plpgsql';
 -- Triggers for updated_at
 CREATE TRIGGER update_trades_updated_at BEFORE UPDATE ON trades
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Journal Entries Table
+-- Stores user-added notes, tags, and flags for trades.
+CREATE TABLE journal_entries (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tx_hash TEXT NOT NULL,
+    notes TEXT,
+    tags TEXT[],
+    is_flagged BOOLEAN DEFAULT FALSE,
+    what_went_well TEXT,
+    what_went_wrong TEXT,
+    what_will_i_do_differently TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, wallet_id, tx_hash)
+);
+
+CREATE TRIGGER update_journal_entries_updated_at BEFORE UPDATE ON journal_entries
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
     
 -- Seed Data for Tokens
 INSERT INTO tokens (symbol, address, name, decimals) VALUES

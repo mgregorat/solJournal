@@ -1,40 +1,63 @@
-import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { NextRequest, NextResponse } from 'next/server';
+import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 
 export async function PATCH(req: NextRequest) {
-  const { tx_hash, is_flagged, userId } = await req.json();
+  const { tx_hash, is_flagged, notes, userId, walletId } = await req.json();
 
-  console.log(`[FLAG] Upserting flag for userId: ${userId}, tx_hash: ${tx_hash}, is_flagged: ${is_flagged}`);
-
-  if (!userId || !tx_hash) {
-    return NextResponse.json({ error: 'Missing userId or transaction hash' }, { status: 400 });
+  if (!userId || !tx_hash || !walletId) {
+    return NextResponse.json({ error: 'Missing userId, walletId, or transaction hash' }, { status: 400 });
   }
 
   try {
+    // Step 1: Fetch the trade to ensure it exists for this user and wallet.
+    // This is a validation step. The wallet_id for the journal entry comes from the request.
+    const { data: trade, error: tradeError } = await supabaseAdmin
+      .from('trades')
+      .select('wallet_id')
+      .eq('transaction_hash', tx_hash)
+      .eq('user_id', userId)
+      .eq('wallet_id', walletId)
+      .single();
+
+    if (tradeError || !trade) {
+      console.error('Error fetching trade for journal entry:', tradeError);
+      return NextResponse.json({ error: 'Associated trade not found for the specified wallet.' }, { status: 404 });
+    }
+
+    // Step 2: Prepare the record for upserting.
+    const record: {
+        tx_hash: any;
+        user_id: any;
+        wallet_id: any;
+        is_flagged?: any;
+        notes?: any;
+    } = {
+        tx_hash: tx_hash,
+        user_id: userId,
+        wallet_id: walletId,
+    };
+
+    if (is_flagged !== undefined) {
+        record.is_flagged = is_flagged;
+    }
+    if (notes !== undefined) {
+        record.notes = notes;
+    }
+
+    // Step 3: Upsert the journal entry with the wallet_id
     const { data, error } = await supabaseAdmin
       .from('journal_entries')
-      .upsert({ 
-        tx_hash: tx_hash, 
-        user_id: userId, 
-        is_flagged: is_flagged,
-        updated_at: new Date().toISOString()
-      }, { 
-        onConflict: 'user_id,tx_hash',
-        // This ensures that nulls from the client don't overwrite existing values in the DB.
-        // For example, if a client sends only a flag, it won't wipe out existing notes.
-        ignoreDuplicates: false, 
-      })
+      .upsert(record, { onConflict: 'user_id,wallet_id,tx_hash' })
       .select();
 
     if (error) {
-      console.error('[FLAG] Error in flag upsert:', error);
+      console.error('Error in flag/notes upsert:', error);
       throw error;
     }
 
-    console.log(`[FLAG] Successfully upserted flag:`, data);
-    return NextResponse.json({ message: 'Flag updated successfully', data });
+    return NextResponse.json({ message: 'Journal entry updated successfully', data });
   } catch (error: any) {
-    console.error('[FLAG] Error updating flag:', error);
+    console.error('Error updating journal entry:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-} 
+}

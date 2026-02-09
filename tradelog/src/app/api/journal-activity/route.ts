@@ -64,7 +64,7 @@ export async function GET(request: Request) {
 
         const [{ data: trades, error: tradesError }, { data: allJournalEntries, error: journalError }] = await Promise.all([
             supabaseAdmin
-                .from('synced_trades')
+                .from('trades')
                 .select('*')
                 .eq('user_id', userId)
                 .eq('wallet_address', walletAddress)
@@ -158,7 +158,9 @@ export async function GET(request: Request) {
                     const aggregatedTags = Array.from(journaledBuys.get(tokenAddress)?.tags || []);
 
                     const eventToPush: JournalEvent = {
-                        id: trade.tx_hash,
+                        id: trade.transaction_hash,
+                        transaction_hash: trade.transaction_hash,
+                        wallet_id: trade.wallet_id,
                         status: 'CLOSED',
                         token_symbol: trade.token_symbol,
                         token_logo: trade.token_logo,
@@ -168,7 +170,7 @@ export async function GET(request: Request) {
                         cost_basis_usd: costForThisSell,
                         realized_pnl_usd: pnl,
                         realized_pnl_percent: costForThisSell > 0 ? (pnl / costForThisSell) * 100 : 0,
-                        sell_tx_hash: trade.tx_hash,
+                        sell_tx_hash: trade.transaction_hash,
                         notes: trade.notes || aggregatedNotes,
                         tags: [...new Set([...(trade.tags || []), ...aggregatedTags])],
                         is_flagged: trade.is_flagged,
@@ -193,11 +195,14 @@ export async function GET(request: Request) {
 
             if (totalAmount > 1e-9) {
                 openPositionTokens.push(tokenAddress);
+                const firstTrade = tradesByToken[tokenAddress][0];
                 journalEvents.push({
                     id: tokenAddress,
+                    transaction_hash: undefined,
+                    wallet_id: firstTrade.wallet_id,
                     status: 'OPEN',
-                    token_symbol: tradesByToken[tokenAddress][0].token_symbol,
-                    token_logo: tradesByToken[tokenAddress][0].token_logo,
+                    token_symbol: firstTrade.token_symbol,
+                    token_logo: firstTrade.token_logo,
                     token_address: tokenAddress,
                     date: lastBuyDate,
                     held_amount: totalAmount,

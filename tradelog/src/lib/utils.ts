@@ -16,3 +16,8 @@ export function isTradeJournaled(trade: Partial<JournalEvent>): boolean {
     !!trade.what_will_i_do_differently
   );
 }
+
+export function shortenAddress(address: string, chars = 4): string {
+  if (!address) return '';
+  return `${address.substring(0, chars)}...${address.substring(address.length - chars)}`;
+}

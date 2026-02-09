@@ -23,6 +23,7 @@ import {
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useState } from "react";
 import { WalletConnectButton } from "./WalletConnectButton";
+import { ThemeToggle } from "./ThemeToggle"; // Import the new component
 
 const Logo = () => (
   <div className="p-4 flex items-center justify-center">
@@ -57,7 +58,8 @@ const NavItem = ({
 
 const UserProfile = () => {
   return (
-    <div className="mt-auto p-4 flex justify-center">
+    <div className="mt-auto p-4 flex flex-col items-center gap-4">
+      <ThemeToggle />
       <WalletConnectButton />
     </div>
   );
@@ -71,7 +73,7 @@ export default function Sidebar({
   onItemClick: (item: string) => void;
 }) {
   return (
-    <div className="w-24 bg-[#111315] text-white flex flex-col fixed h-full border-r border-gray-800">
+    <div className="w-24 bg-card text-white flex flex-col fixed h-full border-r border-border">
       <Logo />
       <nav className="flex flex-col items-center mt-8">
         <NavItem
