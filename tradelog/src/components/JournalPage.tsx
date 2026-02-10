@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,13 +14,15 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import ReactMarkdown from 'react-markdown';
-import { Star, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
+import { Star, ChevronLeft, ChevronRight, Eye, RefreshCw } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, addMonths, subMonths, isSameDay } from 'date-fns';
 import { JournalEvent, JournalPageProps, User } from '@/lib/types';
 import { isTradeJournaled } from '@/lib/utils';
 import { usePrivy } from '@privy-io/react-auth';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { cn } from '@/lib/utils';
+import { useWalletFilter } from '@/app/contexts/WalletFilterContext';
+import toast from 'react-hot-toast';
 
 const ReflectionModal = ({ event, onClose, onSave, onDelete }: { event: JournalEvent | null, onClose: () => void, onSave: (updatedEvent: JournalEvent) => void, onDelete: () => void }) => {
   if (!event) return null;
@@ -321,7 +323,7 @@ const tagOptions = [
 const TradeHistoryModal = ({ trades, onClose, tokenSymbol, onJournal, onViewReflection }: { trades: JournalEvent[] | null, onClose: () => void, tokenSymbol: string, onJournal: (trade: JournalEvent) => void, onViewReflection: (trade: JournalEvent) => void }) => {
   if (!trades || trades.length === 0) return null;
 
-  const sortedTrades = trades.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const sortedTrades = [...trades].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return (
     <Dialog open={!!trades} onOpenChange={onClose}>
@@ -366,7 +368,7 @@ const GroupedJournalCard = ({ tradeGroup, onSelect, onJournalClick }: { tradeGro
     const firstEvent = tradeGroup[0];
     const { token_symbol, token_logo } = firstEvent;
 
-    const latestEvent = tradeGroup.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+    const latestEvent = [...tradeGroup].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
     const finalStatus = latestEvent.status;
     
     const closedTrades = tradeGroup.filter(t => t.status === 'CLOSED');
@@ -419,7 +421,9 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
   const [dbUser, setDbUser] = useState<User | undefined>(propDbUser);
   const { user: privyUser, authenticated } = usePrivy();
   const { publicKey } = useWallet();
+  const { selectedWalletId } = useWalletFilter();
   const [selectedEvent, setSelectedEvent] = useState<JournalEvent | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   
   const [editingNotes, setEditingNotes] = useState('');
   const [editingTags, setEditingTags] = useState<string[]>([]);
@@ -488,76 +492,117 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     return { totalRealizedPnl, winRate, totalTrades, avgGainPercent, avgLossPercent };
   }, [journalEvents]);
 
+  const fetchAndMergeData = useCallback(async () => {
+    if (!publicKey) {
+      return;
+    }
+
+    try {
+      const userId = dbUser?.id;
+      if (!userId) {
+          console.log("User not available yet, skipping data fetch.");
+          return;
+      }
+      const walletAddress = publicKey.toBase58();
+
+      // Step 2: Fetch both trade events and journal entries in parallel
+      let activityUrl = `/api/journal-activity?userId=${userId}&walletAddress=${walletAddress}`;
+      if (selectedWalletId !== null) {
+          activityUrl += `&walletId=${selectedWalletId}`;
+      }
+
+      const [activityResponse, entriesResponse] = await Promise.all([
+        fetch(activityUrl),
+        fetch(`/api/journal/entries?userId=${userId}`)
+      ]);
+
+      if (!activityResponse.ok) {
+        const err = await activityResponse.text();
+        throw new Error(`Failed to fetch journal activity: ${err}`);
+      }
+
+      const tradeEvents: JournalEvent[] = await activityResponse.json();
+      let journalEntries: any[] = [];
+      if (entriesResponse.ok) {
+        journalEntries = await entriesResponse.json();
+      } else {
+        const err = await entriesResponse.text();
+        console.warn('Journal entries unavailable, continuing without entries:', err);
+      }
+
+      // Step 3: Create a lookup map for journal entries
+      const journalMap = new Map(journalEntries.map(entry => [entry.tx_hash, entry]));
+
+      // Step 4: Merge the data and sort by date descending
+      const mergedEvents = tradeEvents.map((event) => {
+        const journalKey = event.transaction_hash || event.id;
+        const journalEntry = journalMap.get(journalKey);
+        if (journalEntry) {
+          return {
+            ...event,
+            notes: journalEntry.notes,
+            tags: journalEntry.tags,
+            is_flagged: journalEntry.is_flagged,
+            what_went_well: journalEntry.what_went_well,
+            what_went_wrong: journalEntry.what_went_wrong,
+            what_will_i_do_differently: journalEntry.what_will_i_do_differently,
+            is_journaled: true, // Explicitly mark as journaled
+            journal_updated_at: journalEntry.updated_at, // Add journal timestamp
+          };
+        }
+        // Return the original event if no journal entry is found
+        return { ...event, is_journaled: false };
+      }).sort((a, b) => {
+        const dateA = a.journal_updated_at ? new Date(a.journal_updated_at) : new Date(a.date);
+        const dateB = b.journal_updated_at ? new Date(b.journal_updated_at) : new Date(b.date);
+        return dateB.getTime() - dateA.getTime();
+      });
+      
+      setJournalEvents(mergedEvents);
+
+    } catch (error) {
+      console.error("Failed to fetch and merge journal data:", error);
+    }
+  }, [dbUser, publicKey, selectedWalletId]);
+
   useEffect(() => {
-    const fetchAndMergeData = async () => {
-      if (!publicKey) {
-        return;
-      }
-
-      try {
-        const userId = dbUser?.id;
-        if (!userId) {
-            // Handle case where dbUser is not yet available.
-            // Maybe fetch it here if not present, or wait.
-            // For now, let's assume it should be present.
-            console.log("User not available yet, skipping data fetch.");
-            return;
-        }
-        const walletAddress = publicKey.toBase58();
-
-        // Step 2: Fetch both trade events and journal entries in parallel
-        const [activityResponse, entriesResponse] = await Promise.all([
-          fetch(`/api/journal-activity?userId=${userId}&walletAddress=${walletAddress}`),
-          fetch(`/api/journal/entries?userId=${userId}`)
-        ]);
-
-        if (!activityResponse.ok || !entriesResponse.ok) {
-          throw new Error('Failed to fetch all required data.');
-        }
-
-        const tradeEvents: JournalEvent[] = await activityResponse.json();
-        const journalEntries: any[] = await entriesResponse.json();
-
-        // Step 3: Create a lookup map for journal entries
-        const journalMap = new Map(journalEntries.map(entry => [entry.tx_hash, entry]));
-
-        // Step 4: Merge the data and sort by date descending
-        const mergedEvents = tradeEvents.map((event) => {
-          if (event.transaction_hash) {
-            const journalEntry = journalMap.get(event.transaction_hash);
-            if (journalEntry) {
-              return {
-                ...event,
-                notes: journalEntry.notes,
-                tags: journalEntry.tags,
-                is_flagged: journalEntry.is_flagged,
-                what_went_well: journalEntry.what_went_well,
-                what_went_wrong: journalEntry.what_went_wrong,
-                what_will_i_do_differently: journalEntry.what_will_i_do_differently,
-                is_journaled: true, // Explicitly mark as journaled
-                journal_updated_at: journalEntry.updated_at, // Add journal timestamp
-              };
-            }
-          }
-          // Return the original event if no journal entry is found
-          return { ...event, is_journaled: false };
-        }).sort((a, b) => {
-          const dateA = a.journal_updated_at ? new Date(a.journal_updated_at) : new Date(a.date);
-          const dateB = b.journal_updated_at ? new Date(b.journal_updated_at) : new Date(b.date);
-          return dateB.getTime() - dateA.getTime();
-        });
-        
-        setJournalEvents(mergedEvents);
-
-      } catch (error) {
-        console.error("Failed to fetch and merge journal data:", error);
-      }
-    };
-
     if (dbUser) { // Run only when dbUser is available
         fetchAndMergeData();
     }
-  }, [dbUser, publicKey]);
+  }, [fetchAndMergeData, dbUser]);
+
+  const handleManualSync = async () => {
+    if (!dbUser || !publicKey) return;
+    setIsSyncing(true);
+    const toastId = toast.loading("Syncing trades from GMGN...");
+    try {
+        const response = await fetch('/api/journal/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: dbUser.id, walletAddress: publicKey.toBase58(), force: true }),
+        });
+        const data = await response.json();
+        if (response.ok) {
+            toast.success(`Sync complete. Found ${data.synced} trades.`, { id: toastId });
+            fetchAndMergeData();
+        } else {
+            console.error("Sync failed:", data);
+            toast.error(`Sync failed: ${data.error || 'Unknown error'}`, { id: toastId });
+        }
+    } catch (error: any) {
+        console.error("Sync error:", error);
+        toast.error(`Sync error: ${error.message}`, { id: toastId });
+    } finally {
+        setIsSyncing(false);
+    }
+  };
+
+  useEffect(() => {
+    // Reset selection when wallet changes to avoid showing stale data
+    setSelectedEvent(null);
+    setViewingEvent(null);
+    setViewingTradeHistory(null);
+  }, [selectedWalletId]);
 
   const groupedAndFilteredEvents = useMemo(() => {
     let events = journalEvents;
@@ -585,7 +630,11 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
         return acc;
     }, {} as Record<string, JournalEvent[]>);
 
-    return Object.values(grouped);
+    return Object.values(grouped).sort((groupA, groupB) => {
+      const latestA = Math.max(...groupA.map(trade => new Date(trade.date).getTime()));
+      const latestB = Math.max(...groupB.map(trade => new Date(trade.date).getTime()));
+      return latestB - latestA;
+    });
 
   }, [journalEvents, selectedTags, tradeType, showFlaggedOnly, activeTab, hideJournaled, journaledTrades, notJournaledTrades]);
 
@@ -627,9 +676,13 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
         setJournalEvents(prev => prev.map(e => e.id === updatedEvent.id ? updatedEvent : e));
       } else {
         const savedData = await response.json();
-        const newJournalEntry = savedData.data[0];
-         setJournalEvents(prev => prev.map(event => 
-            event.id === updatedEvent.id 
+        const newJournalEntry = Array.isArray(savedData.data) ? savedData.data[0] : savedData.data;
+        if (!newJournalEntry) {
+          console.error('Save reflection returned no data:', savedData);
+          return;
+        }
+        setJournalEvents(prev => prev.map(event => 
+          event.id === updatedEvent.id 
             ? { 
                 ...event, 
                 ...updatedEvent,
@@ -674,7 +727,11 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
       }
       
       const savedData = await response.json();
-      const newJournalEntry = savedData.data[0];
+      const newJournalEntry = Array.isArray(savedData.data) ? savedData.data[0] : savedData.data;
+      if (!newJournalEntry) {
+        console.error('Save journal entry returned no data:', savedData);
+        return;
+      }
 
       setJournalEvents(prev => prev.map(event => 
         event.id === selectedEvent.id 
@@ -786,6 +843,16 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     <div className="container mx-auto py-6">
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">P&L Journal</h1>
+        <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleManualSync} 
+            disabled={isSyncing}
+            className="flex items-center gap-2"
+        >
+            <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
+            {isSyncing ? "Syncing..." : "Sync Trades"}
+        </Button>
       </div>
       <PnlCalendar events={journalEvents} onDayClick={handleDayClick} />
       <JournalSummary stats={summaryStats} />

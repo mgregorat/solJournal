@@ -7,6 +7,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 interface WalletFilterContextType {
   wallets: Wallet[];
   selectedWalletId: number | null; // null represents "All wallets"
+  selectedWallet: Wallet | null;
   setSelectedWalletId: (walletId: number | null) => void;
   refreshWallets: () => void;
   loading: boolean;
@@ -22,6 +23,16 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
   const [selectedWalletId, setSelectedWalletIdState] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Derive selectedWallet from selectedWalletId and wallets
+  const selectedWallet = selectedWalletId === null 
+    ? null 
+    : wallets.find(w => w.id === selectedWalletId) || null;
+
+  const getLocalStorageKey = useCallback(() => {
+    if (!dbUser) return LOCAL_STORAGE_KEY;
+    return `tradelog:selectedWalletId:${dbUser.id}`;
+  }, [dbUser]);
+
   const fetchWallets = useCallback(async () => {
     if (!dbUser) {
       setWallets([]);
@@ -36,13 +47,25 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
         setWallets(data);
 
         // After fetching, apply fallback logic for selection if not already set
-        const savedSelection = localStorage.getItem(LOCAL_STORAGE_KEY);
+        const storageKey = getLocalStorageKey();
+        const savedSelection = localStorage.getItem(storageKey);
+        
         if (!savedSelection && data.length === 1) {
             setSelectedWalletIdState(data[0].id);
-            localStorage.setItem(LOCAL_STORAGE_KEY, String(data[0].id));
+            localStorage.setItem(storageKey, String(data[0].id));
         } else if (!savedSelection) {
             setSelectedWalletIdState(null);
-            localStorage.setItem(LOCAL_STORAGE_KEY, 'all');
+            localStorage.setItem(storageKey, 'all');
+        } else {
+             // Restore from saved selection
+             if (savedSelection === 'all') {
+                setSelectedWalletIdState(null);
+             } else {
+                const numericId = parseInt(savedSelection, 10);
+                if (!isNaN(numericId)) {
+                    setSelectedWalletIdState(numericId);
+                }
+             }
         }
 
       } else {
@@ -55,7 +78,7 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
     } finally {
       setLoading(false);
     }
-  }, [dbUser]);
+  }, [dbUser, getLocalStorageKey]);
 
   useEffect(() => {
     fetchWallets();
@@ -63,6 +86,12 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
 
   // Restore selection from localStorage on initial mount
   useEffect(() => {
+    // FORCE RESET to All Wallets to fix stuck state for user
+    setSelectedWalletIdState(null);
+    localStorage.setItem(LOCAL_STORAGE_KEY, 'all');
+    
+    /* 
+    // Previous logic commented out to unblock user
     const savedValue = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (savedValue) {
       if (savedValue === 'all') {
@@ -74,12 +103,13 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
         }
       }
     }
-    // The fallback logic is now handled within fetchWallets to avoid race conditions
+    */
   }, []);
 
   const setSelectedWalletId = (walletId: number | null) => {
+    const storageKey = getLocalStorageKey();
     const valueToStore = walletId === null ? 'all' : String(walletId);
-    localStorage.setItem(LOCAL_STORAGE_KEY, valueToStore);
+    localStorage.setItem(storageKey, valueToStore);
     setSelectedWalletIdState(walletId);
   };
 
@@ -118,6 +148,7 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
   const value = {
     wallets,
     selectedWalletId,
+    selectedWallet,
     setSelectedWalletId,
     refreshWallets: fetchWallets,
     loading

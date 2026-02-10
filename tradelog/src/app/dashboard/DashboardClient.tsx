@@ -54,13 +54,23 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
         
         if (user) {
             const walletAddress = publicKey.toBase58();
-            // The sync process is slow and should not block the initial load.
-            // We can trigger this in the background or with a manual button later.
-            // await fetch('/api/journal/sync', {
-            //   method: 'POST',
-            //   headers: { 'Content-Type': 'application/json' },
-            //   body: JSON.stringify({ userId: user.id, walletAddress }),
-            // });
+            
+            // Fire-and-forget sync in the background
+            fetch('/api/journal/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ userId: user.id, walletAddress }),
+            }).then(async res => {
+                const data = await res.json();
+                if (res.ok) {
+                    console.log("Background sync completed:", data);
+                    // Refresh journal data after successful sync
+                    const journalData = await fetch(`/api/journal-activity?userId=${user.id}&walletAddress=${walletAddress}`).then(r => r.json());
+                    setJournalEvents(journalData || []);
+                } else {
+                    console.warn("Background sync failed or skipped:", data);
+                }
+            }).catch(err => console.error("Background sync error:", err));
 
             const dashboardDataPromise = fetch(`/api/dashboard-data?user_id=${user.id}&walletAddress=${walletAddress}`).then(res => res.json());
             const journalDataPromise = fetch(`/api/journal-activity?userId=${user.id}&walletAddress=${walletAddress}`).then(res => res.json());

@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     console.log('Received request body:', body); // Added for detailed logging
-    const { userId, walletAddress } = body;
+    const { userId, walletAddress, force } = body;
 
     if (!userId || !walletAddress) {
       console.error('Validation Error: userId or walletAddress missing.', { userId, walletAddress });
@@ -55,11 +55,11 @@ export async function POST(request: Request) {
     }
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
 
-    if (lastSyncedAt && lastSyncedAt > fiveMinutesAgo) {
+    if (!force && lastSyncedAt && lastSyncedAt > fiveMinutesAgo) {
       console.log(`CACHE HIT: Wallet ${walletAddress} was synced recently. Skipping scrape.`);
       return NextResponse.json({ message: 'Sync skipped, data is fresh.', synced: 0 });
     }
-    console.log(`CACHE MISS: Wallet ${walletAddress} needs syncing. Proceeding...`);
+    console.log(`CACHE MISS (or forced): Wallet ${walletAddress} syncing. Proceeding...`);
 
 
     const config = getGmgnConfig();
@@ -83,8 +83,11 @@ export async function POST(request: Request) {
 
       console.log('✅ Navigating to establish context...');
       await page.goto(`https://gmgn.ai/sol/wallet/${walletAddress}`, {
-        waitUntil: 'domcontentloaded',
+        waitUntil: 'networkidle2',
       });
+      
+      // Give it a moment to settle any client-side redirects
+      await new Promise(r => setTimeout(r, 2000));
       
       console.log('✅ Fetching all trade data from gmgn.ai with pagination...');
       let allTrades: any[] = [];
@@ -95,10 +98,19 @@ export async function POST(request: Request) {
         console.log(`Fetching page with cursor: ${nextCursor || 'initial'}`);
 
         const jsonData: any = await page.evaluate(async (url) => {
-          const res = await fetch(url);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return await res.json();
+          try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+          } catch (e: any) {
+            return { error: e.message };
+          }
         }, urlWithCursor);
+
+        if (jsonData.error) {
+             console.error(`Error fetching page in context: ${jsonData.error}`);
+             break; // Stop pagination on error
+        }
 
         const trades = jsonData?.data?.activities || [];
         if (trades.length > 0) {
@@ -120,25 +132,19 @@ export async function POST(request: Request) {
         wallet_id: walletId,
         wallet_address: walletAddress,
         transaction_hash: trade.tx_hash,
-        trade_date: new Date(trade.timestamp * 1000), // Convert from seconds to ms
-        event_type: trade.event_type,
+        trade_date: new Date(trade.timestamp * 1000),
+        trade_type: trade.event_type,
         token_address: trade.token.address,
         token_symbol: trade.token.symbol,
-        token_logo: trade.token.logo,
-        token_amount: parseFloat(trade.token_amount),
-        quote_token_address: trade.quote_token.token_address,
-        quote_token_symbol: trade.quote_token.symbol,
-        quote_amount: parseFloat(trade.quote_amount),
-        cost_usd: parseFloat(trade.cost_usd),
-        price_usd: parseFloat(trade.price_usd),
-        gas_usd: parseFloat(trade.gas_usd),
+        amount: parseFloat(trade.token_amount),
+        price: parseFloat(trade.price_usd),
+        total_value: parseFloat(trade.cost_usd),
         source: 'gmgn.ai',
-        raw_data: trade,
       }));
 
       const { data, error } = await supabaseAdmin
         .from('trades')
-        .upsert(recordsToInsert, { onConflict: 'wallet_id,transaction_hash', ignoreDuplicates: false })
+        .upsert(recordsToInsert, { onConflict: 'transaction_hash', ignoreDuplicates: true })
         .select();
 
       if (error) {

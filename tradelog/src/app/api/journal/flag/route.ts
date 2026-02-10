@@ -44,11 +44,36 @@ export async function PATCH(req: NextRequest) {
         record.notes = notes;
     }
 
-    // Step 3: Upsert the journal entry with the wallet_id
-    const { data, error } = await supabaseAdmin
+    // Step 3: Upsert manually (no unique constraint available for ON CONFLICT)
+    const { data: existingEntry, error: existingError } = await supabaseAdmin
       .from('journal_entries')
-      .upsert(record, { onConflict: 'user_id,wallet_id,tx_hash' })
-      .select();
+      .select('id')
+      .eq('user_id', userId)
+      .eq('wallet_id', walletId)
+      .eq('tx_hash', tx_hash)
+      .maybeSingle();
+
+    if (existingError) {
+      console.error('Error checking existing journal entry:', existingError);
+      throw existingError;
+    }
+
+    let data;
+    let error;
+    if (existingEntry?.id) {
+      ({ data, error } = await supabaseAdmin
+        .from('journal_entries')
+        .update(record)
+        .eq('id', existingEntry.id)
+        .select()
+        .single());
+    } else {
+      ({ data, error } = await supabaseAdmin
+        .from('journal_entries')
+        .insert(record)
+        .select()
+        .single());
+    }
 
     if (error) {
       console.error('Error in flag/notes upsert:', error);

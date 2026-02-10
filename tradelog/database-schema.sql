@@ -24,7 +24,7 @@ CREATE TABLE users (
 -- Stores wallet addresses linked to a user.
 CREATE TABLE wallets (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    usessd BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     wallet_address TEXT NOT NULL UNIQUE,
     label TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -56,18 +56,24 @@ CREATE TABLE trades (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
     wallet_address TEXT NOT NULL, -- The specific wallet used for the trade
+    wallet_id BIGINT REFERENCES wallets(id), -- Added for multi-wallet support
     token_symbol TEXT NOT NULL,
     token_address TEXT NOT NULL,
-    trade_type TEXT NOT NULL CHECK (trade_type IN ('buy', 'sell')),
-    amount DECIMAL NOT NULL,
-    price DECIMAL NOT NULL,
-    total_value DECIMAL NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('buy', 'sell')),
+    token_amount DECIMAL NOT NULL,
+    price_usd DECIMAL NOT NULL,
+    cost_usd DECIMAL NOT NULL,
     trade_date TIMESTAMP WITH TIME ZONE NOT NULL,
     notes TEXT,
     emotion_tags TEXT[], -- Array of strings for emotions
     setup_id BIGINT REFERENCES setups(id) ON DELETE SET NULL, -- Link to the setup used
     source TEXT, -- e.g., 'pump.fun', 'jupiter'
     transaction_hash TEXT UNIQUE,
+    quote_token_address TEXT,
+    quote_token_symbol TEXT,
+    quote_amount DECIMAL,
+    gas_usd DECIMAL,
+    token_logo TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
