@@ -57,7 +57,13 @@ export async function POST(request: Request) {
 
     if (!force && lastSyncedAt && lastSyncedAt > fiveMinutesAgo) {
       console.log(`CACHE HIT: Wallet ${walletAddress} was synced recently. Skipping scrape.`);
-      return NextResponse.json({ message: 'Sync skipped, data is fresh.', synced: 0 });
+      return NextResponse.json({
+        message: 'Sync skipped, data is fresh.',
+        synced: 0,
+        skipped: true,
+        walletId,
+        last_synced_at: walletData?.last_synced_at ?? null,
+      });
     }
     console.log(`CACHE MISS (or forced): Wallet ${walletAddress} syncing. Proceeding...`);
 

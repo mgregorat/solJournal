@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 
 export async function PATCH(req: NextRequest) {
-  const { tx_hash, is_flagged, notes, userId, walletId } = await req.json();
+  const { tx_hash, is_flagged, is_journaled, notes, userId, walletId } = await req.json();
 
   if (!userId || !tx_hash || !walletId) {
     return NextResponse.json({ error: 'Missing userId, walletId, or transaction hash' }, { status: 400 });
@@ -30,6 +30,7 @@ export async function PATCH(req: NextRequest) {
         user_id: any;
         wallet_id: any;
         is_flagged?: any;
+        is_journaled?: any;
         notes?: any;
     } = {
         tx_hash: tx_hash,
@@ -39,6 +40,9 @@ export async function PATCH(req: NextRequest) {
 
     if (is_flagged !== undefined) {
         record.is_flagged = is_flagged;
+    }
+    if (is_journaled !== undefined) {
+        record.is_journaled = is_journaled;
     }
     if (notes !== undefined) {
         record.notes = notes;

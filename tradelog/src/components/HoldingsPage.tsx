@@ -26,11 +26,13 @@ interface TokenHolding {
 interface HoldingsPageProps {
     holdings: TokenHolding[];
     isLoading: boolean;
-    onRefresh: () => void;
+    onRefresh: () => Promise<boolean | void>;
     walletAddress?: string;
+    canRefresh?: boolean;
+    solBalance?: number;
 }
 
-export const HoldingsPage = ({ holdings, isLoading, onRefresh, walletAddress }: HoldingsPageProps) => {
+export const HoldingsPage = ({ holdings, isLoading, onRefresh, walletAddress, canRefresh = true, solBalance = 0 }: HoldingsPageProps) => {
   const { publicKey } = useWallet();
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sortBy, setSortBy] = useState<'value' | 'pnl' | 'symbol'>('value');
@@ -74,9 +76,18 @@ export const HoldingsPage = ({ holdings, isLoading, onRefresh, walletAddress }: 
     }
   };
 
-  const handleManualRefresh = () => {
+  const handleManualRefresh = async () => {
+    if (!canRefresh) {
+      toast.error('Select a wallet to refresh holdings.');
+      return;
+    }
     toast.info('Refreshing holdings data...');
-    onRefresh();
+    try {
+      await onRefresh();
+      toast.success('Holdings refreshed');
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to refresh holdings');
+    }
   };
 
   if (!publicKey) return <ConnectWalletPrompt />;
@@ -104,9 +115,15 @@ export const HoldingsPage = ({ holdings, isLoading, onRefresh, walletAddress }: 
         <div>
           <h1 className="text-3xl font-bold text-white">Your Holdings</h1>
           <p className="text-gray-400">Overview of your token assets</p>
+          <p className="text-xs text-gray-500 mt-1">
+            {walletAddress ? `Wallet: ${walletAddress}` : 'All wallets'} | SOL Balance: {Number(solBalance || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+          </p>
+          {isLoading && holdings.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-1">Refreshing...</p>
+          )}
         </div>
         <div className="flex items-center space-x-2">
-          <Button onClick={handleManualRefresh} variant="outline" size="sm" className="h-9" disabled={isLoading}>
+          <Button onClick={handleManualRefresh} variant="outline" size="sm" className="h-9" disabled={isLoading || !canRefresh}>
             {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Refresh
           </Button>

@@ -52,7 +52,7 @@ export async function getPrices(mints: Set<string>): Promise<PriceMap> {
     });
     
     const combinedPrices = { ...freshPrices, ...newPriceMap };
-    setCache(cacheKey, combinedPrices, CACHE_TTL_SECONDS);
+    setCache(cacheKey, combinedPrices, CACHE_TTL_SECONDS * 1000);
     return combinedPrices;
 
   } catch (error) {

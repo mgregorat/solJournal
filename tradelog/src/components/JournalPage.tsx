@@ -14,15 +14,21 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import ReactMarkdown from 'react-markdown';
-import { Star, ChevronLeft, ChevronRight, Eye, RefreshCw } from 'lucide-react';
+import { Star, ChevronLeft, ChevronRight, Eye, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, addMonths, subMonths, isSameDay } from 'date-fns';
 import { JournalEvent, JournalPageProps, User } from '@/lib/types';
-import { isTradeJournaled } from '@/lib/utils';
 import { usePrivy } from '@privy-io/react-auth';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useWalletFilter } from '@/app/contexts/WalletFilterContext';
 import toast from 'react-hot-toast';
+import { JournalEntryModal } from '@/components/JournalEntryModal';
+import { cachedFetch } from '@/lib/cachedFetch';
+import { invalidateCache } from '@/lib/cache';
+
+const isCuratedTrade = (trade: Partial<JournalEvent>) => !!trade.is_journaled || !!trade.is_flagged;
+const isJournalCompleted = (trade: Partial<JournalEvent>) => !!trade.is_journaled;
 
 const ReflectionModal = ({ event, onClose, onSave, onDelete }: { event: JournalEvent | null, onClose: () => void, onSave: (updatedEvent: JournalEvent) => void, onDelete: () => void }) => {
   if (!event) return null;
@@ -416,30 +422,38 @@ const GroupedJournalCard = ({ tradeGroup, onSelect, onJournalClick }: { tradeGro
     );
 };
 
-export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propDbUser }: JournalPageProps) => {
+export const JournalPage = ({
+  journalEvents: initialJournalEvents,
+  dbUser: propDbUser,
+  pendingJournalTxHash,
+  onPendingJournalTxHandled,
+}: JournalPageProps) => {
   const [journalEvents, setJournalEvents] = useState<JournalEvent[]>(Array.isArray(initialJournalEvents) ? initialJournalEvents : []);
+  const [allTradeEvents, setAllTradeEvents] = useState<JournalEvent[]>(Array.isArray(initialJournalEvents) ? initialJournalEvents : []);
   const [dbUser, setDbUser] = useState<User | undefined>(propDbUser);
   const { user: privyUser, authenticated } = usePrivy();
   const { publicKey } = useWallet();
-  const { selectedWalletId, selectedWallet } = useWalletFilter();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { selectedWalletId, selectedWallet, setSelectedWalletId } = useWalletFilter();
   const [selectedEvent, setSelectedEvent] = useState<JournalEvent | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  
-  const [editingNotes, setEditingNotes] = useState('');
-  const [editingTags, setEditingTags] = useState<string[]>([]);
-  const [editingWhatWentWell, setEditingWhatWentWell] = useState('');
-  const [editingWhatWentWrong, setEditingWhatWentWrong] = useState('');
-  const [editingWhatWillIDoDifferently, setEditingWhatWillIDoDifferently] = useState('');
+  const [isRefreshingData, setIsRefreshingData] = useState(false);
   
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tradeType, setTradeType] = useState('all');
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [viewingEvent, setViewingEvent] = useState<JournalEvent | null>(null);
-  const [activeTab, setActiveTab] = useState("not-journaled");
+  const [activeTab, setActiveTab] = useState("journaled");
   const [hideJournaled, setHideJournaled] = useState(false);
+  const [isToJournalOpen, setIsToJournalOpen] = useState(true);
+  const [snoozedTxHashes, setSnoozedTxHashes] = useState<Set<string>>(new Set());
 
   const [viewingTradeHistory, setViewingTradeHistory] = useState<JournalEvent[] | null>(null);
+  const openTxParam = searchParams.get("openTx");
+  const walletIdParam = searchParams.get("walletId");
 
   const tradesForSelectedDate = useMemo(() => {
     if (!selectedDate) return [];
@@ -451,9 +465,34 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     });
   }, [selectedDate, journalEvents]);
 
-  const journaledTrades = useMemo(() => journalEvents.filter(isTradeJournaled), [journalEvents]);
-  const notJournaledTrades = useMemo(() => journalEvents.filter(trade => !isTradeJournaled(trade)), [journalEvents]);
-  const journaledPercentage = journalEvents.length > 0 ? (journaledTrades.length / journalEvents.length) * 100 : 0;
+  const journalingEligibleTrades = useMemo(
+    () =>
+      allTradeEvents.filter(
+        (trade) => trade.status === "CLOSED" && !!trade.transaction_hash
+      ),
+    [allTradeEvents]
+  );
+
+  const journaledTrades = useMemo(
+    () => journalingEligibleTrades.filter(isJournalCompleted),
+    [journalingEligibleTrades]
+  );
+
+  const toJournalTrades = useMemo(() => {
+    return journalingEligibleTrades
+      .filter((trade) => !isJournalCompleted(trade))
+      .sort((a, b) => {
+        if (!!a.is_flagged !== !!b.is_flagged) {
+          return a.is_flagged ? -1 : 1;
+        }
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      });
+  }, [journalingEligibleTrades]);
+
+  const journaledPercentage =
+    journalingEligibleTrades.length > 0
+      ? (journaledTrades.length / journalingEligibleTrades.length) * 100
+      : 0;
 
   const handleDayClick = (day: Date) => {
     const dayStr = format(day, 'yyyy-MM-dd');
@@ -492,80 +531,92 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     return { totalRealizedPnl, winRate, totalTrades, avgGainPercent, avgLossPercent };
   }, [journalEvents]);
 
+  const applyMergedEvents = useCallback((mergedEvents: JournalEvent[]) => {
+    setAllTradeEvents(mergedEvents);
+    setJournalEvents(mergedEvents.filter(isCuratedTrade));
+  }, []);
+
   const fetchAndMergeData = useCallback(async () => {
     if (!publicKey) {
       return;
     }
 
     try {
+      setIsRefreshingData(true);
       const userId = dbUser?.id;
       if (!userId) {
           console.log("User not available yet, skipping data fetch.");
           return;
       }
-      // Step 2: Fetch both trade events and journal entries in parallel
-      let activityUrl = `/api/journal-activity?userId=${userId}`;
-      if (selectedWalletId !== null) {
-        activityUrl += `&walletId=${selectedWalletId}`;
-      }
-      let entriesUrl = `/api/journal/entries?userId=${userId}`;
-      if (selectedWalletId !== null) {
-        entriesUrl += `&walletId=${selectedWalletId}`;
-      }
 
-      const [activityResponse, entriesResponse] = await Promise.all([
-        fetch(activityUrl),
-        fetch(entriesUrl)
-      ]);
+      const walletScope = selectedWalletId ?? 'all';
+      const mergedEvents = await cachedFetch<JournalEvent[]>({
+        key: `journal:${userId}:${walletScope}`,
+        fetcher: async () => {
+          let activityUrl = `/api/journal-activity?userId=${userId}`;
+          if (selectedWalletId !== null) {
+            activityUrl += `&walletId=${selectedWalletId}`;
+          }
+          let entriesUrl = `/api/journal/entries?userId=${userId}`;
+          if (selectedWalletId !== null) {
+            entriesUrl += `&walletId=${selectedWalletId}`;
+          }
 
-      if (!activityResponse.ok) {
-        const err = await activityResponse.text();
-        throw new Error(`Failed to fetch journal activity: ${err}`);
-      }
+          const [activityResponse, entriesResponse] = await Promise.all([
+            fetch(activityUrl),
+            fetch(entriesUrl)
+          ]);
 
-      const tradeEvents: JournalEvent[] = await activityResponse.json();
-      let journalEntries: any[] = [];
-      if (entriesResponse.ok) {
-        journalEntries = await entriesResponse.json();
-      } else {
-        const err = await entriesResponse.text();
-        console.warn('Journal entries unavailable, continuing without entries:', err);
-      }
+          if (!activityResponse.ok) {
+            const err = await activityResponse.text();
+            throw new Error(`Failed to fetch journal activity: ${err}`);
+          }
 
-      // Step 3: Create a lookup map for journal entries
-      const journalMap = new Map(journalEntries.map(entry => [entry.tx_hash, entry]));
+          const tradeEvents: JournalEvent[] = await activityResponse.json();
+          let journalEntries: any[] = [];
+          if (entriesResponse.ok) {
+            journalEntries = await entriesResponse.json();
+          } else {
+            const err = await entriesResponse.text();
+            console.warn('Journal entries unavailable, continuing without entries:', err);
+          }
 
-      // Step 4: Merge the data and sort by date descending
-      const mergedEvents = tradeEvents.map((event) => {
-        const journalKey = event.transaction_hash || event.id;
-        const journalEntry = journalMap.get(journalKey);
-        if (journalEntry) {
-          return {
-            ...event,
-            notes: journalEntry.notes,
-            tags: journalEntry.tags,
-            is_flagged: journalEntry.is_flagged,
-            what_went_well: journalEntry.what_went_well,
-            what_went_wrong: journalEntry.what_went_wrong,
-            what_will_i_do_differently: journalEntry.what_will_i_do_differently,
-            is_journaled: true, // Explicitly mark as journaled
-            journal_updated_at: journalEntry.updated_at, // Add journal timestamp
-          };
-        }
-        // Return the original event if no journal entry is found
-        return { ...event, is_journaled: false };
-      }).sort((a, b) => {
-        const dateA = a.journal_updated_at ? new Date(a.journal_updated_at) : new Date(a.date);
-        const dateB = b.journal_updated_at ? new Date(b.journal_updated_at) : new Date(b.date);
-        return dateB.getTime() - dateA.getTime();
+          const journalMap = new Map(journalEntries.map(entry => [entry.tx_hash, entry]));
+
+          return tradeEvents.map((event) => {
+            const journalKey = event.transaction_hash || event.id;
+            const journalEntry = journalMap.get(journalKey);
+            if (journalEntry) {
+              return {
+                ...event,
+                notes: journalEntry.notes,
+                tags: journalEntry.tags,
+                is_flagged: journalEntry.is_flagged,
+                what_went_well: journalEntry.what_went_well,
+                what_went_wrong: journalEntry.what_went_wrong,
+                what_will_i_do_differently: journalEntry.what_will_i_do_differently,
+                is_journaled: true,
+                journal_updated_at: journalEntry.updated_at,
+              };
+            }
+            return { ...event, is_journaled: false };
+          }).sort((a, b) => {
+            const dateA = a.journal_updated_at ? new Date(a.journal_updated_at) : new Date(a.date);
+            const dateB = b.journal_updated_at ? new Date(b.journal_updated_at) : new Date(b.date);
+            return dateB.getTime() - dateA.getTime();
+          });
+        },
+        onUpdate: applyMergedEvents,
       });
-      
-      setJournalEvents(mergedEvents);
+
+      applyMergedEvents(mergedEvents);
 
     } catch (error) {
       console.error("Failed to fetch and merge journal data:", error);
+    } finally {
+      setIsRefreshingData(false);
     }
-  }, [dbUser, publicKey, selectedWalletId, selectedWallet]);
+  }, [dbUser, publicKey, selectedWalletId, applyMergedEvents]);
 
   useEffect(() => {
     if (dbUser) { // Run only when dbUser is available
@@ -586,6 +637,7 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
         const data = await response.json();
         if (response.ok) {
             toast.success(`Sync complete. Found ${data.synced} trades.`, { id: toastId });
+            invalidateCache(`journal:${dbUser.id}:`);
             fetchAndMergeData();
         } else {
             console.error("Sync failed:", data);
@@ -606,12 +658,61 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     setViewingTradeHistory(null);
   }, [selectedWalletId]);
 
-  const groupedAndFilteredEvents = useMemo(() => {
-    let events = journalEvents;
+  useEffect(() => {
+    if (!walletIdParam) return;
+    const parsedWalletId = parseInt(walletIdParam, 10);
+    if (isNaN(parsedWalletId)) return;
+    if (selectedWalletId !== parsedWalletId) {
+      setSelectedWalletId(parsedWalletId);
+    }
+  }, [walletIdParam, selectedWalletId, setSelectedWalletId]);
 
-    if (activeTab === 'journaled') events = journaledTrades;
-    if (activeTab === 'not-journaled') events = notJournaledTrades;
-    if (hideJournaled) events = events.filter(trade => !isTradeJournaled(trade));
+  useEffect(() => {
+    if (!pendingJournalTxHash) return;
+    const matchedEvent = journalEvents.find(
+      (event) => event.transaction_hash === pendingJournalTxHash
+    );
+    if (!matchedEvent) return;
+
+    setActiveTab("journaled");
+    setViewingEvent(null);
+    setViewingTradeHistory(null);
+    setSelectedEvent(matchedEvent);
+    onPendingJournalTxHandled?.();
+  }, [pendingJournalTxHash, journalEvents, onPendingJournalTxHandled]);
+
+  useEffect(() => {
+    if (!openTxParam) return;
+    if (allTradeEvents.length === 0) return;
+    if (walletIdParam) {
+      const parsedWalletId = parseInt(walletIdParam, 10);
+      if (!isNaN(parsedWalletId) && selectedWalletId !== parsedWalletId) {
+        return;
+      }
+    }
+
+    const matchedEvent = allTradeEvents.find(
+      (event) =>
+        event.status === "CLOSED" &&
+        !!event.transaction_hash &&
+        event.transaction_hash === openTxParam
+    );
+
+    if (!matchedEvent) {
+      toast.error("Could not find that closed trade to journal.");
+      router.replace(pathname, { scroll: false });
+      return;
+    }
+
+    setViewingEvent(null);
+    setViewingTradeHistory(null);
+    setSelectedEvent(matchedEvent);
+    router.replace(pathname, { scroll: false });
+  }, [openTxParam, walletIdParam, selectedWalletId, allTradeEvents, router, pathname]);
+
+  const groupedJournaledEvents = useMemo(() => {
+    let events = journaledTrades;
+    if (hideJournaled) events = [];
 
     const filtered = events.filter(event => {
       const tagMatch = selectedTags.length === 0 || event.tags?.some(tag => selectedTags.includes(tag));
@@ -638,7 +739,30 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
       return latestB - latestA;
     });
 
-  }, [journalEvents, selectedTags, tradeType, showFlaggedOnly, activeTab, hideJournaled, journaledTrades, notJournaledTrades]);
+  }, [journaledTrades, selectedTags, tradeType, showFlaggedOnly, hideJournaled]);
+
+  const filteredToJournalTrades = useMemo(() => {
+    const filtered = toJournalTrades.filter((trade) => {
+      if (trade.transaction_hash && snoozedTxHashes.has(trade.transaction_hash)) {
+        return false;
+      }
+
+      const tagMatch =
+        selectedTags.length === 0 || trade.tags?.some((tag) => selectedTags.includes(tag));
+      const typeMatch =
+        tradeType === "all" ||
+        (tradeType === "closed" && trade.status === "CLOSED");
+      const flagMatch = !showFlaggedOnly || !!trade.is_flagged;
+      return tagMatch && typeMatch && flagMatch;
+    });
+
+    return filtered.sort((a, b) => {
+      if (!!a.is_flagged !== !!b.is_flagged) {
+        return a.is_flagged ? -1 : 1;
+      }
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+  }, [toJournalTrades, snoozedTxHashes, selectedTags, tradeType, showFlaggedOnly]);
 
   const handleReflectionSave = async (updatedEvent: JournalEvent) => {
     if (!updatedEvent.transaction_hash) return;
@@ -701,70 +825,57 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     }
   };
 
-  const handleSave = async () => {
-    if (!selectedEvent || !selectedEvent.transaction_hash) return;
+  const handleJournalEntrySaved = (savedEntry: any) => {
+    if (!selectedEvent) return;
 
-    const journalData = {
-      tx_hash: selectedEvent.transaction_hash,
-      userId: dbUser?.id,
-      walletId: selectedEvent.wallet_id,
-      notes: editingNotes,
-      tags: editingTags,
-      what_went_well: editingWhatWentWell,
-      what_went_wrong: editingWhatWentWrong,
-      what_will_i_do_differently: editingWhatWillIDoDifferently,
+    const savedEvent: JournalEvent = {
+      ...selectedEvent,
+      notes: savedEntry?.notes,
+      tags: savedEntry?.tags,
+      is_flagged: savedEntry?.is_flagged,
+      what_went_well: savedEntry?.what_went_well,
+      what_went_wrong: savedEntry?.what_went_wrong,
+      what_will_i_do_differently: savedEntry?.what_will_i_do_differently,
+      journal_entry_id: savedEntry?.id,
+      is_journaled: true,
+      journal_updated_at: savedEntry?.updated_at,
     };
 
-    try {
-      const response = await fetch('/api/journal/flag', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(journalData),
+    setAllTradeEvents((prev) => {
+      const exists = prev.some(
+        (event) => event.transaction_hash === selectedEvent.transaction_hash
+      );
+      const next = exists
+        ? prev.map((event) =>
+            event.transaction_hash === selectedEvent.transaction_hash
+              ? { ...event, ...savedEvent }
+              : event
+          )
+        : [savedEvent, ...prev];
+      return next;
+    });
+
+    setJournalEvents((prev) => {
+      const exists = prev.some(
+        (event) => event.transaction_hash === selectedEvent.transaction_hash
+      );
+      const next = exists
+        ? prev.map((event) =>
+            event.transaction_hash === selectedEvent.transaction_hash
+              ? { ...event, ...savedEvent }
+              : event
+          )
+        : [savedEvent, ...prev];
+
+      return next.sort((a, b) => {
+        const dateA = a.journal_updated_at ? new Date(a.journal_updated_at) : new Date(a.date);
+        const dateB = b.journal_updated_at ? new Date(b.journal_updated_at) : new Date(b.date);
+        return dateB.getTime() - dateA.getTime();
       });
+    });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Failed to save journal entry:', errorData);
-        return;
-      }
-      
-      const savedData = await response.json();
-      const newJournalEntry = Array.isArray(savedData.data) ? savedData.data[0] : savedData.data;
-      if (!newJournalEntry) {
-        console.error('Save journal entry returned no data:', savedData);
-        return;
-      }
-
-      setJournalEvents(prev => prev.map(event => 
-        event.id === selectedEvent.id 
-          ? { 
-              ...event, 
-              notes: editingNotes, 
-              tags: editingTags, 
-              what_went_well: editingWhatWentWell,
-              what_went_wrong: editingWhatWentWrong,
-              what_will_i_do_differently: editingWhatWillIDoDifferently,
-              journal_entry_id: newJournalEntry.id,
-              is_journaled: true,
-              journal_updated_at: newJournalEntry.updated_at,
-            } 
-          : event
-      ).sort((a, b) => {
-          const dateA = a.journal_updated_at ? new Date(a.journal_updated_at) : new Date(a.date);
-          const dateB = b.journal_updated_at ? new Date(b.journal_updated_at) : new Date(b.date);
-          return dateB.getTime() - dateA.getTime();
-      }));
-      
-      setSelectedEvent(null);
-      setEditingNotes('');
-      setEditingTags([]);
-      setEditingWhatWentWell('');
-      setEditingWhatWentWrong('');
-      setEditingWhatWillIDoDifferently('');
-
-    } catch (error) {
-      console.error('An error occurred while saving the journal entry:', error);
-    }
+    setSelectedEvent(null);
+    setActiveTab('journaled');
   };
 
   const handleJournalClick = (e: React.MouseEvent, tradeGroup: JournalEvent[]) => {
@@ -845,23 +956,28 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     <div className="container mx-auto py-6">
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">P&L Journal</h1>
-        <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={handleManualSync} 
-            disabled={isSyncing}
-            className="flex items-center gap-2"
-        >
-            <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
-            {isSyncing ? "Syncing..." : "Sync Trades"}
-        </Button>
+        <div className="flex items-center gap-3">
+          {isRefreshingData && (
+            <span className="text-xs text-muted-foreground">Refreshing...</span>
+          )}
+          <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleManualSync} 
+              disabled={isSyncing}
+              className="flex items-center gap-2"
+          >
+              <RefreshCw className={cn("h-4 w-4", isSyncing && "animate-spin")} />
+              {isSyncing ? "Syncing..." : "Sync Trades"}
+          </Button>
+        </div>
       </div>
       <PnlCalendar events={journalEvents} onDayClick={handleDayClick} />
       <JournalSummary stats={summaryStats} />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="not-journaled">❌ Not Journaled <Badge className="ml-2">{notJournaledTrades.length}</Badge></TabsTrigger>
+          <TabsTrigger value="not-journaled">📝 To Journal <Badge className="ml-2">{toJournalTrades.length}</Badge></TabsTrigger>
           <TabsTrigger value="journaled">✅ Journaled <Badge className="ml-2">{journaledTrades.length}</Badge></TabsTrigger>
         </TabsList>
         <div className="my-4">
@@ -909,16 +1025,86 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-        {groupedAndFilteredEvents.map((tradeGroup) => (
-          <GroupedJournalCard
-            key={tradeGroup[0].token_address}
-            tradeGroup={tradeGroup}
-            onSelect={() => setViewingTradeHistory(tradeGroup)}
-            onJournalClick={(e) => handleJournalClick(e, tradeGroup)}
-          />
-        ))}
-      </div>
+      {activeTab === 'not-journaled' ? (
+        <div className="mt-6 rounded-lg border border-border bg-card">
+          <button
+            type="button"
+            className="w-full flex items-center justify-between p-4 text-left"
+            onClick={() => setIsToJournalOpen((prev) => !prev)}
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-semibold">To Journal Backlog</span>
+              <Badge>{filteredToJournalTrades.length}</Badge>
+            </div>
+            {isToJournalOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          {isToJournalOpen && (
+            <div className="border-t border-border p-4">
+              {filteredToJournalTrades.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No trades in your backlog.</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredToJournalTrades.map((trade) => (
+                    <Card key={trade.id} className="bg-card border-border text-foreground">
+                      <CardHeader>
+                        <CardTitle className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {trade.token_logo && <img src={trade.token_logo} alt={trade.token_symbol} className="w-6 h-6 rounded-full" />}
+                            <span className="text-base">{trade.token_symbol}</span>
+                          </div>
+                          {trade.is_flagged && <Badge variant="secondary">Flagged</Badge>}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="text-sm text-muted-foreground">
+                          {format(new Date(trade.date), 'MMM d, yyyy h:mm a')}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => setSelectedEvent(trade)}>
+                            Journal
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              if (trade.transaction_hash) {
+                                setSnoozedTxHashes((prev) => {
+                                  const next = new Set(prev);
+                                  next.add(trade.transaction_hash!);
+                                  return next;
+                                });
+                              }
+                            }}
+                          >
+                            Snooze
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        groupedJournaledEvents.length === 0 ? (
+          <div className="mt-6 rounded-lg border border-border bg-card p-8 text-center text-muted-foreground">
+            You haven&apos;t journaled any trades yet. Use the Trades tab to add trades to your journal.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+            {groupedJournaledEvents.map((tradeGroup) => (
+              <GroupedJournalCard
+                key={tradeGroup[0].token_address}
+                tradeGroup={tradeGroup}
+                onSelect={() => setViewingTradeHistory(tradeGroup)}
+                onJournalClick={(e) => handleJournalClick(e, tradeGroup)}
+              />
+            ))}
+          </div>
+        )
+      )}
 
       <TradeHistoryModal
         trades={viewingTradeHistory}
@@ -947,88 +1133,30 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
         onDelete={handleDeleteJournal}
       />
 
-      {selectedEvent && (
-        <Dialog open={!!selectedEvent} onOpenChange={() => setSelectedEvent(null)}>
-          <DialogContent className="bg-gray-900 border-gray-700 text-white">
-            <DialogHeader>
-              <DialogTitle>{selectedEvent.token_symbol} Trade Details</DialogTitle>
-            </DialogHeader>
-            
-            <div className="flex flex-col gap-4">
-              <div>
-                <h4 className="font-semibold mb-2 text-gray-400">Trade Notes</h4>
-                <Textarea
-                  placeholder="Add your thoughts on this trade..."
-                  value={editingNotes}
-                  onChange={(e) => setEditingNotes(e.target.value)}
-                  className="bg-gray-800 border-gray-600"
-                />
-              </div>
-
-              <div>
-                <h4 className="font-semibold mb-2 text-gray-400">What went well?</h4>
-                <Textarea
-                  placeholder="What went well with this trade?"
-                  value={editingWhatWentWell}
-                  onChange={(e) => setEditingWhatWentWell(e.target.value)}
-                  className="bg-gray-800 border-gray-600"
-                />
-              </div>
-              
-              <div>
-                <h4 className="font-semibold mb-2 text-gray-400">What went wrong?</h4>
-                <Textarea
-                  placeholder="What went wrong with this trade?"
-                  value={editingWhatWentWrong}
-                  onChange={(e) => setEditingWhatWentWrong(e.target.value)}
-                  className="bg-gray-800 border-gray-600"
-                />
-              </div>
-
-              <div>
-                <h4 className="font-semibold mb-2 text-gray-400">What will you do differently?</h4>
-                <Textarea
-                  placeholder="What will you do differently next time?"
-                  value={editingWhatWillIDoDifferently}
-                  onChange={(e) => setEditingWhatWillIDoDifferently(e.target.value)}
-                  className="bg-gray-800 border-gray-600"
-                />
-              </div>
-
-              <div>
-                <h4 className="font-semibold mb-2 text-gray-400">Tags (up to 5)</h4>
-                <MultiSelect
-                  options={tagOptions}
-                  onValueChange={(value) => {
-                    if (value.length <= 5) {
-                      setEditingTags(value);
-                    }
-                  }}
-                  defaultValue={editingTags}
-                  placeholder="Select up to 5 tags..."
-                  className="w-full"
-                />
-              </div>
-              
-              <div className="text-xs text-gray-500 pt-4 border-t border-gray-700">
-                {selectedEvent.status === 'CLOSED' ? (
-                  <>
-                    <p>Sold on {new Date(selectedEvent.date).toLocaleString()}</p>
-                    <a href={`https://solscan.io/tx/${selectedEvent.sell_tx_hash}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-                      View Sale on Solscan
-                    </a>
-                  </>
-                ) : (
-                  <p>Last purchase on {new Date(selectedEvent.date).toLocaleString()}</p>
-                )}
-              </div>
-            </div>
-
-            <Button onClick={handleSave} className="mt-4">
-              Save Changes
-            </Button>
-          </DialogContent>
-        </Dialog>
+      {selectedEvent && dbUser?.id && selectedEvent.wallet_id && selectedEvent.transaction_hash && (
+        <JournalEntryModal
+          open={!!selectedEvent}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedEvent(null);
+            }
+          }}
+          userId={dbUser.id}
+          walletId={selectedEvent.wallet_id}
+          tx_hash={selectedEvent.transaction_hash}
+          initialValues={{
+            notes: selectedEvent.notes,
+            tags: selectedEvent.tags,
+            what_went_well: selectedEvent.what_went_well,
+            what_went_wrong: selectedEvent.what_went_wrong,
+            what_will_i_do_differently: selectedEvent.what_will_i_do_differently,
+            is_flagged: selectedEvent.is_flagged,
+          }}
+          tokenSymbol={selectedEvent.token_symbol}
+          tradeDate={selectedEvent.date}
+          sellTxHash={selectedEvent.sell_tx_hash}
+          onSaved={handleJournalEntrySaved}
+        />
       )}
         </div>
     );

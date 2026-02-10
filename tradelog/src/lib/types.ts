@@ -69,8 +69,10 @@ export interface JournalEvent {
 }
 
 export interface JournalPageProps {
-  journalEvents: JournalEvent[];
+  journalEvents?: JournalEvent[];
   dbUser?: User;
+  pendingJournalTxHash?: string | null;
+  onPendingJournalTxHandled?: () => void;
 }
 
 export interface User {
@@ -85,6 +87,7 @@ export interface Wallet {
     user_id: number;
     wallet_address: string;
     label?: string | null;
+    last_synced_at?: string | null;
     created_at: string;
     updated_at?: string;
 }

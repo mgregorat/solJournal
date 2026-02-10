@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     let error;
     ({ data: wallets, error } = await supabaseAdmin
       .from('wallets')
-      .select('id, wallet_address, label')
+      .select('id, wallet_address, label, last_synced_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: true }));
 
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     if (error && error.code === 'PGRST204') {
       const fallback = await supabaseAdmin
         .from('wallets')
-        .select('id, wallet_address')
+        .select('id, wallet_address, last_synced_at')
         .eq('user_id', userId)
         .order('created_at', { ascending: true });
       wallets = (fallback.data || []).map((w: any) => ({ ...w, label: null }));
@@ -171,6 +171,47 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json(data);
   } catch (error) {
     console.error('An unexpected error occurred in PATCH /api/wallets:', error);
+    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
+  }
+}
+
+// DELETE /api/wallets
+export async function DELETE(req: NextRequest) {
+  try {
+    const { userId, walletId } = await req.json();
+
+    if (!userId || !walletId) {
+      return NextResponse.json({ error: 'User ID and wallet ID are required' }, { status: 400 });
+    }
+
+    // Validate ownership first.
+    const { data: wallet, error: walletError } = await supabaseAdmin
+      .from('wallets')
+      .select('id, user_id')
+      .eq('id', walletId)
+      .single();
+
+    if (walletError || !wallet) {
+      return NextResponse.json({ error: 'Wallet not found' }, { status: 404 });
+    }
+    if (Number(wallet.user_id) !== Number(userId)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const { error: deleteError } = await supabaseAdmin
+      .from('wallets')
+      .delete()
+      .eq('id', walletId)
+      .eq('user_id', userId);
+
+    if (deleteError) {
+      console.error('Error deleting wallet:', deleteError);
+      return NextResponse.json({ error: deleteError.message || 'Failed to delete wallet' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('An unexpected error occurred in DELETE /api/wallets:', error);
     return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
   }
 }

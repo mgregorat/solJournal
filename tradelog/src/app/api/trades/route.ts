@@ -7,24 +7,31 @@ import { Trade } from '@/lib/types';
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
-    const walletAddress = searchParams.get('walletAddress');
-    const walletAddresses = searchParams.get('walletAddresses');
+    const userIdStr = searchParams.get('userId');
+    const walletIdParam = searchParams.get('walletId');
 
-    if (!walletAddress && !walletAddresses) {
-        return NextResponse.json({ error: 'walletAddress or walletAddresses is required' }, { status: 400 });
+    if (!userIdStr) {
+        return NextResponse.json({ error: 'userId is required' }, { status: 400 });
+    }
+
+    const userId = parseInt(userIdStr, 10);
+    if (isNaN(userId)) {
+        return NextResponse.json({ error: 'Invalid userId format' }, { status: 400 });
     }
 
     try {
         let query = supabaseAdmin
             .from('trades')
-            .select('*')
+            .select('id, wallet_id, wallet_address, token_symbol, token_address, trade_type, amount, price, total_value, trade_date, source, transaction_hash')
+            .eq('user_id', userId)
             .order('trade_date', { ascending: false });
-        
-        if (walletAddresses) {
-            const addresses = walletAddresses.split(',');
-            query = query.in('wallet_address', addresses);
-        } else if (walletAddress) {
-            query = query.eq('wallet_address', walletAddress);
+
+        if (walletIdParam && walletIdParam !== 'all') {
+            const walletId = parseInt(walletIdParam, 10);
+            if (isNaN(walletId)) {
+                return NextResponse.json({ error: 'Invalid walletId format' }, { status: 400 });
+            }
+            query = query.eq('wallet_id', walletId);
         }
 
         const { data: trades, error } = await query;
