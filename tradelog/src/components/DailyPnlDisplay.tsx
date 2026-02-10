@@ -6,15 +6,17 @@ import { TrendingUp, TrendingDown, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { cn } from '@/lib/utils';
 import { DailyPnlData } from '@/lib/pnl'; // Import the type
+import { useWalletFilter } from '@/app/contexts/WalletFilterContext';
 
 export const DailyPnlDisplay = () => {
   const { publicKey } = useWallet();
+  const { dbUserId, selectedWalletId, selectedWallet } = useWalletFilter();
   const [pnlData, setPnlData] = useState<DailyPnlData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!publicKey) {
+    if (!dbUserId) {
       setIsLoading(false);
       return;
     }
@@ -23,7 +25,12 @@ export const DailyPnlDisplay = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/pnl/today?walletAddress=${publicKey.toBase58()}`);
+        let url = `/api/pnl/today?userId=${dbUserId}`;
+        if (selectedWalletId !== null) {
+          url += `&walletId=${selectedWalletId}`;
+        }
+
+        const response = await fetch(url);
         if (!response.ok) {
           const errData = await response.json();
           throw new Error(errData.error || 'Failed to fetch P&L data');
@@ -43,7 +50,7 @@ export const DailyPnlDisplay = () => {
     const interval = setInterval(fetchData, 60000); 
 
     return () => clearInterval(interval);
-  }, [publicKey]);
+  }, [dbUserId, selectedWalletId, selectedWallet]);
 
   const getPnlColor = (pnl?: number): string => {
     if (pnl === undefined || pnl === null || pnl === 0) return 'text-gray-300';

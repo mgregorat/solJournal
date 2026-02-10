@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const userIdStr = searchParams.get('userId');
+    const walletIdStr = searchParams.get('walletId');
 
     if (!userIdStr) {
         return NextResponse.json({ error: 'userId is required' }, { status: 400 });
@@ -21,10 +22,19 @@ export async function GET(request: Request) {
         // The service key should be a long string of characters. If it's short or 'undefined', this is the problem.
         console.log(`[API /journal/entries] SUPABASE_SERVICE_KEY loaded as: ${process.env.SUPABASE_SERVICE_KEY}`);
 
-        const { data: journalEntries, error: journalError } = await supabaseAdmin
+        let query = supabaseAdmin
             .from('journal_entries')
             .select('*')
             .eq('user_id', userId);
+
+        if (walletIdStr !== null) {
+            const walletId = parseInt(walletIdStr, 10);
+            if (!isNaN(walletId)) {
+                query = query.eq('wallet_id', walletId);
+            }
+        }
+
+        const { data: journalEntries, error: journalError } = await query;
 
         if (journalError) {
             console.error('[API /journal/entries] Supabase error:', journalError);

@@ -50,7 +50,6 @@ interface EnrichedTrade {
     amount?: number;
     total_value?: number;
     price?: number;
-    tx_hash?: string;
     tags?: string[];
     notes?: string;
     is_flagged?: boolean;
@@ -64,11 +63,10 @@ interface EnrichedTrade {
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const userIdStr = searchParams.get('userId');
-    const walletAddress = searchParams.get('walletAddress');
     const walletIdStr = searchParams.get('walletId');
 
-    if (!userIdStr || !walletAddress) {
-        return NextResponse.json({ error: 'userId and walletAddress are required' }, { status: 400 });
+    if (!userIdStr) {
+        return NextResponse.json({ error: 'userId is required' }, { status: 400 });
     }
 
     const userId = parseInt(userIdStr, 10);
@@ -77,7 +75,7 @@ export async function GET(request: Request) {
     }
 
     try {
-        console.log(`Fetching data for user: ${userId}, wallet: ${walletAddress}, walletId: ${walletIdStr || 'All'}`);
+        console.log(`Fetching data for user: ${userId}, walletId: ${walletIdStr || 'All'}`);
 
         let tradesQuery = supabaseAdmin
             .from('trades')
@@ -124,7 +122,7 @@ export async function GET(request: Request) {
         }
 
         const normalizedTrades: EnrichedTrade[] = (trades || []).map((t: any) => {
-            const transaction_hash = (t.transaction_hash || t.tx_hash) as string | undefined;
+            const transaction_hash = t.transaction_hash as string | undefined;
             const event_type = (t.event_type || t.trade_type) as 'buy' | 'sell' | undefined;
             const token_amount = Number(t.token_amount ?? t.amount ?? 0);
             const cost_usd = Number(t.cost_usd ?? t.total_value ?? 0);

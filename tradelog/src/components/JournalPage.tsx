@@ -421,7 +421,7 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
   const [dbUser, setDbUser] = useState<User | undefined>(propDbUser);
   const { user: privyUser, authenticated } = usePrivy();
   const { publicKey } = useWallet();
-  const { selectedWalletId } = useWalletFilter();
+  const { selectedWalletId, selectedWallet } = useWalletFilter();
   const [selectedEvent, setSelectedEvent] = useState<JournalEvent | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   
@@ -503,17 +503,19 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
           console.log("User not available yet, skipping data fetch.");
           return;
       }
-      const walletAddress = publicKey.toBase58();
-
       // Step 2: Fetch both trade events and journal entries in parallel
-      let activityUrl = `/api/journal-activity?userId=${userId}&walletAddress=${walletAddress}`;
+      let activityUrl = `/api/journal-activity?userId=${userId}`;
       if (selectedWalletId !== null) {
-          activityUrl += `&walletId=${selectedWalletId}`;
+        activityUrl += `&walletId=${selectedWalletId}`;
+      }
+      let entriesUrl = `/api/journal/entries?userId=${userId}`;
+      if (selectedWalletId !== null) {
+        entriesUrl += `&walletId=${selectedWalletId}`;
       }
 
       const [activityResponse, entriesResponse] = await Promise.all([
         fetch(activityUrl),
-        fetch(`/api/journal/entries?userId=${userId}`)
+        fetch(entriesUrl)
       ]);
 
       if (!activityResponse.ok) {
@@ -563,7 +565,7 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
     } catch (error) {
       console.error("Failed to fetch and merge journal data:", error);
     }
-  }, [dbUser, publicKey, selectedWalletId]);
+  }, [dbUser, publicKey, selectedWalletId, selectedWallet]);
 
   useEffect(() => {
     if (dbUser) { // Run only when dbUser is available
@@ -579,7 +581,7 @@ export const JournalPage = ({ journalEvents: initialJournalEvents, dbUser: propD
         const response = await fetch('/api/journal/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: dbUser.id, walletAddress: publicKey.toBase58(), force: true }),
+            body: JSON.stringify({ userId: dbUser.id, walletAddress: selectedWallet?.wallet_address || publicKey.toBase58(), force: true }),
         });
         const data = await response.json();
         if (response.ok) {

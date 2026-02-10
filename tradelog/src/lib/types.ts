@@ -84,6 +84,7 @@ export interface Wallet {
     id: number;
     user_id: number;
     wallet_address: string;
+    label?: string | null;
     created_at: string;
     updated_at?: string;
 }

@@ -5,9 +5,11 @@ import { User, Wallet } from '@/lib/types';
 import { useWallet } from '@solana/wallet-adapter-react';
 
 interface WalletFilterContextType {
+  dbUserId: number | null;
   wallets: Wallet[];
   selectedWalletId: number | null; // null represents "All wallets"
   selectedWallet: Wallet | null;
+  activeWalletAddress: string | null;
   setSelectedWalletId: (walletId: number | null) => void;
   refreshWallets: () => void;
   loading: boolean;
@@ -27,6 +29,7 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
   const selectedWallet = selectedWalletId === null 
     ? null 
     : wallets.find(w => w.id === selectedWalletId) || null;
+  const activeWalletAddress = selectedWalletId === null ? null : (selectedWallet?.wallet_address ?? null);
 
   const getLocalStorageKey = useCallback(() => {
     if (!dbUser) return LOCAL_STORAGE_KEY;
@@ -146,9 +149,11 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
   }, [dbUser, publicKey, wallets, addConnectedWallet]);
 
   const value = {
+    dbUserId: dbUser?.id ?? null,
     wallets,
     selectedWalletId,
     selectedWallet,
+    activeWalletAddress,
     setSelectedWalletId,
     refreshWallets: fetchWallets,
     loading

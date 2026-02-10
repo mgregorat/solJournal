@@ -76,12 +76,18 @@ async function getWallets(userId: string) {
 }
 
 // Helper to get user's trades
-async function getTrades(userId: string) {
-    const { data, error } = await supabaseAdmin
+async function getTrades(userId: string, walletId?: number | null) {
+    let query = supabaseAdmin
         .from('trades')
         .select('*')
         .eq('user_id', userId)
         .order('trade_date', { ascending: false });
+    
+    if (walletId !== undefined && walletId !== null) {
+        query = query.eq('wallet_id', walletId);
+    }
+    
+    const { data, error } = await query;
 
     if (error) {
         console.error("Error fetching trades:", error);
@@ -95,54 +101,146 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('user_id');
     const walletAddress = searchParams.get('walletAddress');
+    const walletIdStr = searchParams.get('walletId');
 
-    if (!userId || !walletAddress) {
-        return NextResponse.json({ error: 'user_id and walletAddress are required' }, { status: 400 });
+    if (!userId) {
+        return NextResponse.json({ error: 'user_id is required' }, { status: 400 });
     }
 
     try {
-        const [holdingsResult, solBalanceResult, watchlistResult, walletsResult, tradesResult] = await Promise.allSettled([
-            fetchHoldings(walletAddress),
-            fetchSOLBalance(walletAddress),
+        const wallets = await getWallets(userId);
+        const parsedWalletId = walletIdStr ? parseInt(walletIdStr, 10) : null;
+
+        let targetWallets: any[] = [];
+        if (parsedWalletId !== null && !isNaN(parsedWalletId)) {
+            targetWallets = wallets.filter((w: any) => w.id === parsedWalletId);
+        } else if (walletAddress) {
+            targetWallets = wallets.filter((w: any) => w.wallet_address === walletAddress);
+            if (targetWallets.length === 0) {
+                targetWallets = [{ id: null, wallet_address: walletAddress }];
+            }
+        } else {
+            targetWallets = wallets;
+        }
+
+        const holdingsByWallet = await Promise.allSettled(
+            targetWallets.map(async (wallet: any) => {
+                const [holdingsResult, solBalanceResult] = await Promise.allSettled([
+                    fetchHoldings(wallet.wallet_address),
+                    fetchSOLBalance(wallet.wallet_address),
+                ]);
+                return { wallet, holdingsResult, solBalanceResult };
+            })
+        );
+
+        const [watchlistResult, tradesResult] = await Promise.allSettled([
             getWatchlistDetails(userId),
-            getWallets(userId),
-            getTrades(userId),
+            getTrades(userId, parsedWalletId !== null && !isNaN(parsedWalletId) ? parsedWalletId : null),
         ]);
 
         let enrichedHoldings: Holding[] = [];
-        if (holdingsResult.status === 'fulfilled') {
-            console.log('Successfully fetched holdings data:', JSON.stringify(holdingsResult.value, null, 2));
+        const mergedByMint = new Map<string, Holding>();
 
-            const rawHoldings = holdingsResult.value?.data?.holdings;
-            if (rawHoldings && Array.isArray(rawHoldings)) {
-                enrichedHoldings = rawHoldings
-                    .filter((h: any) => parseFloat(h.balance) > 1e-9)
-                    .map((h: any) => ({
-                        mint: h.token.address, amount: parseFloat(h.balance), decimals: h.token.decimals,
-                        symbol: h.token.symbol, name: h.token.name, logoURI: h.token.logo,
-                        currentPrice: parseFloat(h.price), currentValueUSD: parseFloat(h.usd_value),
-                        avgEntryPrice: parseFloat(h.avg_cost), totalCostBasis: parseFloat(h.cost),
-                        unrealizedPnL: parseFloat(h.unrealized_profit), pnlPercentage: parseFloat(h.unrealized_pnl) * 100
-                    }));
-            } else {
-                console.log('Holdings data is not in the expected format or is empty.');
+        for (const walletResult of holdingsByWallet) {
+            if (walletResult.status !== 'fulfilled') {
+                console.error('Failed to fetch holdings for wallet:', walletResult.reason);
+                continue;
             }
-        } else {
-            console.error('Failed to fetch holdings:', holdingsResult.reason);
+
+            const { holdingsResult, solBalanceResult } = walletResult.value;
+
+            if (holdingsResult.status === 'fulfilled') {
+                const rawHoldings = holdingsResult.value?.data?.holdings;
+                if (rawHoldings && Array.isArray(rawHoldings)) {
+                    for (const h of rawHoldings) {
+                        if (parseFloat(h.balance) <= 1e-9) continue;
+
+                        const mint = h.token.address;
+                        const amount = parseFloat(h.balance);
+                        const decimals = h.token.decimals;
+                        const symbol = h.token.symbol;
+                        const name = h.token.name;
+                        const logoURI = h.token.logo;
+                        const currentPrice = parseFloat(h.price);
+                        const currentValueUSD = parseFloat(h.usd_value);
+                        const totalCostBasis = parseFloat(h.cost);
+                        const unrealizedPnL = parseFloat(h.unrealized_profit);
+
+                        const existing = mergedByMint.get(mint);
+                        if (!existing) {
+                            mergedByMint.set(mint, {
+                                mint,
+                                amount,
+                                decimals,
+                                symbol,
+                                name,
+                                logoURI,
+                                currentPrice,
+                                currentValueUSD,
+                                avgEntryPrice: amount > 0 ? totalCostBasis / amount : 0,
+                                totalCostBasis,
+                                unrealizedPnL,
+                                pnlPercentage: totalCostBasis > 0 ? (unrealizedPnL / totalCostBasis) * 100 : 0,
+                            });
+                        } else {
+                            const nextAmount = (existing.amount || 0) + amount;
+                            const nextCost = (existing.totalCostBasis || 0) + totalCostBasis;
+                            const nextUnrealized = (existing.unrealizedPnL || 0) + unrealizedPnL;
+                            const nextValue = (existing.currentValueUSD || 0) + currentValueUSD;
+                            mergedByMint.set(mint, {
+                                ...existing,
+                                amount: nextAmount,
+                                currentValueUSD: nextValue,
+                                totalCostBasis: nextCost,
+                                unrealizedPnL: nextUnrealized,
+                                avgEntryPrice: nextAmount > 0 ? nextCost / nextAmount : 0,
+                                pnlPercentage: nextCost > 0 ? (nextUnrealized / nextCost) * 100 : 0,
+                                currentPrice,
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (solBalanceResult.status === 'fulfilled' && solBalanceResult.value) {
+                const sol = solBalanceResult.value;
+                const solMint = 'So11111111111111111111111111111111111111112';
+                const existingSol = mergedByMint.get(solMint);
+                if (!existingSol) {
+                    mergedByMint.set(solMint, {
+                        mint: solMint,
+                        amount: sol.sol_balance,
+                        decimals: 9,
+                        symbol: 'SOL',
+                        name: 'Solana',
+                        logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
+                        currentPrice: sol.price_per_sol,
+                        currentValueUSD: sol.usd_value,
+                        isNativeSOL: true,
+                    });
+                } else {
+                    mergedByMint.set(solMint, {
+                        ...existingSol,
+                        amount: (existingSol.amount || 0) + sol.sol_balance,
+                        currentValueUSD: (existingSol.currentValueUSD || 0) + sol.usd_value,
+                        currentPrice: sol.price_per_sol,
+                        isNativeSOL: true,
+                    });
+                }
+            }
         }
-        if (solBalanceResult.status === 'fulfilled' && solBalanceResult.value) {
-            enrichedHoldings.unshift({
-                mint: 'So11111111111111111111111111111111111111112',
-                amount: solBalanceResult.value.sol_balance, decimals: 9, symbol: 'SOL', name: 'Solana',
-                logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
-                currentPrice: solBalanceResult.value.price_per_sol, currentValueUSD: solBalanceResult.value.usd_value, isNativeSOL: true
-            });
+
+        enrichedHoldings = Array.from(mergedByMint.values());
+        const solIdx = enrichedHoldings.findIndex(h => h.mint === 'So11111111111111111111111111111111111111112');
+        if (solIdx > 0) {
+            const [sol] = enrichedHoldings.splice(solIdx, 1);
+            enrichedHoldings.unshift(sol);
         }
         
         return NextResponse.json({
             holdings: enrichedHoldings,
             watchlist: watchlistResult.status === 'fulfilled' ? watchlistResult.value : [],
-            wallets: walletsResult.status === 'fulfilled' ? walletsResult.value : [],
+            wallets,
             trades: tradesResult.status === 'fulfilled' ? tradesResult.value : [],
         });
 

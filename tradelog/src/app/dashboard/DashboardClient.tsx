@@ -13,13 +13,23 @@ import { Trade, Holding, User } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import TradeForm from "@/components/TradeForm";
-import { WalletFilterProvider } from "@/app/contexts/WalletFilterContext";
+import { WalletFilterProvider, useWalletFilter } from "@/app/contexts/WalletFilterContext";
 import { WalletSelector } from "@/components/WalletSelector";
 
-export function DashboardClient({ initialTrades: propInitialTrades, initialHoldings: propInitialHoldings }: any) {
-  const { publicKey, connected } = useWallet();
-
-  const [dbUser, setDbUser] = useState<User | null>(null);
+function DashboardContent({
+  dbUser,
+  publicKey,
+  connected,
+  propInitialTrades,
+  propInitialHoldings,
+}: {
+  dbUser: User;
+  publicKey: any;
+  connected: boolean;
+  propInitialTrades: any;
+  propInitialHoldings: any;
+}) {
+  const { selectedWalletId, selectedWallet } = useWalletFilter();
   const [wallets, setWallets] = useState<any[]>([]);
   const [trades, setTrades] = useState<Trade[]>(propInitialTrades || []);
   const [watchlist, setWatchlist] = useState<any[]>([]);
@@ -30,62 +40,49 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
   const [activeItem, setActiveItem] = useState("Dashboard");
 
   useEffect(() => {
-    const fetchUserAndData = async () => {
-      if (!connected || !publicKey) {
+    const fetchData = async () => {
+      if (!connected || !publicKey || !dbUser) {
         setIsLoading(false);
-        setDbUser(null);
         return;
       }
 
       setIsLoading(true);
-
       try {
-        const response = await fetch('/api/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ wallet_address: publicKey.toBase58() }),
-        });
+        const selectedWalletAddress = selectedWallet?.wallet_address || null;
 
-        if (!response.ok) {
-            throw new Error("Failed to get or create user.");
+        // Fire-and-forget sync only for a concrete wallet context.
+        const syncWalletAddress = selectedWalletAddress || publicKey.toBase58();
+        fetch('/api/journal/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: dbUser.id, walletAddress: syncWalletAddress }),
+        }).then(async res => {
+          const data = await res.json();
+          if (res.ok) {
+            console.log("Background sync completed:", data);
+          } else {
+            console.warn("Background sync failed or skipped:", data);
+          }
+        }).catch(err => console.error("Background sync error:", err));
+
+        let dashboardUrl = `/api/dashboard-data?user_id=${dbUser.id}`;
+        let journalUrl = `/api/journal-activity?userId=${dbUser.id}`;
+
+        if (selectedWalletId !== null) {
+          dashboardUrl += `&walletId=${selectedWalletId}`;
+          journalUrl += `&walletId=${selectedWalletId}`;
         }
-        const user = await response.json();
-        setDbUser(user);
-        
-        if (user) {
-            const walletAddress = publicKey.toBase58();
-            
-            // Fire-and-forget sync in the background
-            fetch('/api/journal/sync', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ userId: user.id, walletAddress }),
-            }).then(async res => {
-                const data = await res.json();
-                if (res.ok) {
-                    console.log("Background sync completed:", data);
-                    // Refresh journal data after successful sync
-                    const journalData = await fetch(`/api/journal-activity?userId=${user.id}&walletAddress=${walletAddress}`).then(r => r.json());
-                    setJournalEvents(journalData || []);
-                } else {
-                    console.warn("Background sync failed or skipped:", data);
-                }
-            }).catch(err => console.error("Background sync error:", err));
 
-            const dashboardDataPromise = fetch(`/api/dashboard-data?user_id=${user.id}&walletAddress=${walletAddress}`).then(res => res.json());
-            const journalDataPromise = fetch(`/api/journal-activity?userId=${user.id}&walletAddress=${walletAddress}`).then(res => res.json());
+        const [dashboardData, journalData] = await Promise.all([
+          fetch(dashboardUrl).then(res => res.json()),
+          fetch(journalUrl).then(res => res.json()),
+        ]);
 
-            const [dashboardData, journalData] = await Promise.all([
-                dashboardDataPromise,
-                journalDataPromise
-            ]);
-
-            setHoldings(dashboardData?.holdings || []);
-            setWatchlist(dashboardData?.watchlist || []);
-            setTrades(dashboardData?.trades || []);
-            setWallets(dashboardData?.wallets || []);
-            setJournalEvents(journalData || []);
-        }
+        setHoldings(dashboardData?.holdings || []);
+        setWatchlist(dashboardData?.watchlist || []);
+        setTrades(dashboardData?.trades || []);
+        setWallets(dashboardData?.wallets || []);
+        setJournalEvents(journalData || []);
       } catch (error) {
         console.error("Initialization error:", error);
       } finally {
@@ -93,8 +90,8 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
       }
     };
 
-    fetchUserAndData();
-  }, [connected, publicKey]);
+    fetchData();
+  }, [connected, publicKey, dbUser, selectedWalletId, selectedWallet]);
 
 
   const handleRefreshHoldings = async () => {
@@ -103,7 +100,10 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
     console.log("Manual refresh triggered.");
     setIsRefreshing(true);
     try {
-      const url = `/api/dashboard-data?user_id=${dbUser.id}&walletAddress=${publicKey.toBase58()}`;
+      let url = `/api/dashboard-data?user_id=${dbUser.id}`;
+      if (selectedWalletId !== null) {
+        url += `&walletId=${selectedWalletId}`;
+      }
       const response = await fetch(url);
       
       if (response.ok) {
@@ -129,15 +129,11 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
       return <WalletConnection />;
     }
    
-    if (!dbUser) {
-        return <LoadingScreen message="Syncing user..." />;
-    }
-    
     switch (activeItem) {
       case "Journal":
         return <JournalPage dbUser={dbUser} />;
       case "Holdings":
-        return <HoldingsPage holdings={holdings} isLoading={isRefreshing} onRefresh={handleRefreshHoldings} walletAddress={publicKey?.toBase58()} />;
+        return <HoldingsPage holdings={holdings} isLoading={isRefreshing} onRefresh={handleRefreshHoldings} walletAddress={selectedWallet?.wallet_address || publicKey?.toBase58()} />;
       case "Watchlist":
         return <WatchlistPage initialWatchlist={watchlist} dbUser={dbUser} />;
       case "Dashboard":
@@ -171,11 +167,69 @@ export function DashboardClient({ initialTrades: propInitialTrades, initialHoldi
   };
   
   return (
+    <div className="flex">
+      <Sidebar activeItem={activeItem} onItemClick={setActiveItem} dbUser={dbUser} />
+      <main className="flex-1 ml-24 p-8">{renderMainContent()}</main>
+    </div>
+  );
+}
+
+export function DashboardClient({ initialTrades: propInitialTrades, initialHoldings: propInitialHoldings }: any) {
+  const { publicKey, connected } = useWallet();
+  const [dbUser, setDbUser] = useState<User | null>(null);
+  const [isUserLoading, setIsUserLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      if (!connected || !publicKey) {
+        setDbUser(null);
+        setIsUserLoading(false);
+        return;
+      }
+
+      setIsUserLoading(true);
+      try {
+        const response = await fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ wallet_address: publicKey.toBase58() }),
+        });
+        if (!response.ok) {
+          throw new Error("Failed to get or create user.");
+        }
+        const user = await response.json();
+        setDbUser(user);
+      } catch (error) {
+        console.error("Initialization error:", error);
+      } finally {
+        setIsUserLoading(false);
+      }
+    };
+
+    fetchUser();
+  }, [connected, publicKey]);
+
+  if (!connected || !publicKey) {
+    return <WalletConnection />;
+  }
+
+  if (isUserLoading) {
+    return <LoadingScreen message="Syncing user..." />;
+  }
+
+  if (!dbUser) {
+    return <LoadingScreen message="Syncing user..." />;
+  }
+
+  return (
     <WalletFilterProvider dbUser={dbUser}>
-        <div className="flex">
-          <Sidebar activeItem={activeItem} onItemClick={setActiveItem} dbUser={dbUser} />
-          <main className="flex-1 ml-24 p-8">{renderMainContent()}</main>
-        </div>
+      <DashboardContent
+        dbUser={dbUser}
+        publicKey={publicKey}
+        connected={connected}
+        propInitialTrades={propInitialTrades}
+        propInitialHoldings={propInitialHoldings}
+      />
     </WalletFilterProvider>
   );
 }

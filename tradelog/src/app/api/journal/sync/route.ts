@@ -127,20 +127,48 @@ export async function POST(request: Request) {
 
       console.log(`✅ Found a total of ${allTrades.length} trades across all pages. Syncing to database...`);
       
-      const recordsToInsert = allTrades.map((trade: any) => ({
-        user_id: userId,
-        wallet_id: walletId,
-        wallet_address: walletAddress,
-        transaction_hash: trade.tx_hash,
-        trade_date: new Date(trade.timestamp * 1000),
-        trade_type: trade.event_type,
-        token_address: trade.token.address,
-        token_symbol: trade.token.symbol,
-        amount: parseFloat(trade.token_amount),
-        price: parseFloat(trade.price_usd),
-        total_value: parseFloat(trade.cost_usd),
-        source: 'gmgn.ai',
-      }));
+      const toNum = (v: unknown): number => {
+        const n = typeof v === 'number' ? v : Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+
+      const recordsToInsert = allTrades
+        .map((trade: any) => {
+          const amount = toNum(trade.token_amount);
+          const totalValue = toNum(trade.cost_usd);
+          const directPrice = toNum(trade.price_usd);
+          const derivedPrice = amount > 0 ? totalValue / amount : 0;
+          const price = directPrice > 0 ? directPrice : derivedPrice;
+          const eventType = trade.event_type === 'sell' ? 'sell' : 'buy';
+          const tokenAddress = trade?.token?.address;
+          const tokenSymbol = trade?.token?.symbol || 'UNKNOWN';
+          const txHash = trade?.tx_hash;
+
+          // Keep DB inserts clean: drop rows missing required identifiers.
+          if (!txHash || !tokenAddress) {
+            return null;
+          }
+
+          return {
+            user_id: userId,
+            wallet_id: walletId,
+            wallet_address: walletAddress,
+            transaction_hash: txHash,
+            trade_date: new Date(trade.timestamp * 1000),
+            trade_type: eventType,
+            token_address: tokenAddress,
+            token_symbol: tokenSymbol,
+            amount,
+            price,
+            total_value: totalValue,
+            source: 'gmgn.ai',
+          };
+        })
+        .filter(Boolean);
+
+      if (recordsToInsert.length === 0) {
+        return NextResponse.json({ message: 'No valid trades found to sync.', synced: 0 });
+      }
 
       const { data, error } = await supabaseAdmin
         .from('trades')
