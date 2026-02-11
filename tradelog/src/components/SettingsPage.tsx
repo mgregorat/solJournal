@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useWalletFilter } from "@/app/contexts/WalletFilterContext";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { Wallet } from "@/lib/types";
 import { shortenAddress } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,12 +20,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useAppSettings } from "@/lib/hooks/useAppSettings";
+import { clearCache } from "@/lib/cache";
+import { LinkWalletModal } from "@/components/LinkWalletModal";
 import toast from "react-hot-toast";
 
 export function SettingsPage() {
   const { dbUserId, selectedWalletId, setSelectedWalletId, refreshWallets } = useWalletFilter();
+  const { publicKey } = useWallet();
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [isLoadingWallets, setIsLoadingWallets] = useState(false);
+  const [isLinkWalletModalOpen, setIsLinkWalletModalOpen] = useState(false);
   const [editingWallet, setEditingWallet] = useState<Wallet | null>(null);
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [isSavingNickname, setIsSavingNickname] = useState(false);
@@ -32,6 +37,9 @@ export function SettingsPage() {
   const [removeConfirmText, setRemoveConfirmText] = useState("");
   const [isRemovingWallet, setIsRemovingWallet] = useState(false);
   const [isSyncingNow, setIsSyncingNow] = useState(false);
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isClearCacheModalOpen, setIsClearCacheModalOpen] = useState(false);
   const [lastSyncedByWalletId, setLastSyncedByWalletId] = useState<Record<number, string>>({});
   const { settings, updateSetting } = useAppSettings(dbUserId);
 
@@ -42,6 +50,11 @@ export function SettingsPage() {
 
   const getNicknameStorageKey = (walletId: number) => `tradelog:walletNickname:${walletId}`;
   const getLastSyncedStorageKey = (walletId: number) => `tradelog:lastSyncedAt:${walletId}`;
+  const syncStatusStorageKey = useMemo(
+    () => (dbUserId ? `tradelog:syncState:${dbUserId}` : null),
+    [dbUserId]
+  );
+  const connectedWalletAddress = publicKey ? publicKey.toBase58() : null;
 
   const getLocalNickname = (walletId: number) => {
     if (typeof window === "undefined") return null;
@@ -80,6 +93,19 @@ export function SettingsPage() {
     fetchWallets();
   }, [dbUserId]);
 
+  const connectedWalletAlreadyAdded =
+    !!connectedWalletAddress &&
+    wallets.some(
+      (wallet) =>
+        wallet.wallet_address === connectedWalletAddress
+    );
+
+  const handleWalletLinked = async (wallet: { id: number }) => {
+    await fetchWallets();
+    await refreshWallets();
+    setSelectedWalletId(wallet.id);
+  };
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const syncedMap: Record<number, string> = {};
@@ -91,6 +117,60 @@ export function SettingsPage() {
     }
     setLastSyncedByWalletId(syncedMap);
   }, [wallets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!syncStatusStorageKey) {
+      setIsAutoSyncing(false);
+      return;
+    }
+
+    const readSyncState = () => {
+      try {
+        const raw = localStorage.getItem(syncStatusStorageKey);
+        if (!raw) {
+          setIsAutoSyncing(false);
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        setIsAutoSyncing(Boolean(parsed?.syncing));
+      } catch {
+        setIsAutoSyncing(false);
+      }
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === syncStatusStorageKey) {
+        readSyncState();
+      }
+      if (!event.key?.startsWith("tradelog:lastSyncedAt:")) return;
+      const walletId = Number(event.key.split(":").pop());
+      if (!Number.isFinite(walletId) || !event.newValue) return;
+      setLastSyncedByWalletId((prev) => ({ ...prev, [walletId]: event.newValue as string }));
+    };
+
+    const onSyncStatus = (event: Event) => {
+      const detail = (event as CustomEvent<{ syncing?: boolean }>).detail;
+      setIsAutoSyncing(Boolean(detail?.syncing));
+    };
+
+    const onWalletSynced = (event: Event) => {
+      const detail = (event as CustomEvent<{ walletId?: number; timestamp?: string }>).detail;
+      if (!detail?.walletId || !detail?.timestamp) return;
+      setLastSyncedByWalletId((prev) => ({ ...prev, [detail.walletId as number]: detail.timestamp as string }));
+    };
+
+    readSyncState();
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("tradelog:sync-status", onSyncStatus);
+    window.addEventListener("tradelog:wallet-synced", onWalletSynced);
+
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("tradelog:sync-status", onSyncStatus);
+      window.removeEventListener("tradelog:wallet-synced", onWalletSynced);
+    };
+  }, [syncStatusStorageKey]);
 
   const handleSetDefault = (walletId: number) => {
     localStorage.setItem(selectedWalletStorageKey, String(walletId));
@@ -162,13 +242,27 @@ export function SettingsPage() {
     return `Wallet (${shortenAddress(wallet.wallet_address)})`;
   };
 
-  const openRemoveModal = (wallet: Wallet) => {
-    if (selectedWalletId === wallet.id) {
-      toast.error("Cannot remove the currently selected wallet.");
-      return;
-    }
+  const activeWalletDisplay = useMemo(() => {
+    if (selectedWalletId === null) return "All wallets";
+    const wallet = wallets.find((item) => item.id === selectedWalletId);
+    if (!wallet) return "Selected wallet";
+    return `${displayWalletName(wallet)} (${shortenAddress(wallet.wallet_address)})`;
+  }, [selectedWalletId, wallets]);
+
+  const getRemoveBlockedReason = (wallet: Wallet): string | null => {
     if (wallets.length <= 1) {
-      toast.error("Cannot remove the last wallet.");
+      return "Cannot remove the last wallet.";
+    }
+    if (selectedWalletId === wallet.id) {
+      return "Cannot remove the currently selected wallet.";
+    }
+    return null;
+  };
+
+  const openRemoveModal = (wallet: Wallet) => {
+    const blockedReason = getRemoveBlockedReason(wallet);
+    if (blockedReason) {
+      toast.error(blockedReason);
       return;
     }
 
@@ -273,6 +367,13 @@ export function SettingsPage() {
     const nextTimestamp = data?.last_synced_at || new Date().toISOString();
     localStorage.setItem(getLastSyncedStorageKey(wallet.id), nextTimestamp);
     setLastSyncedByWalletId((prev) => ({ ...prev, [wallet.id]: nextTimestamp }));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("tradelog:wallet-synced", {
+          detail: { walletId: wallet.id, timestamp: nextTimestamp },
+        })
+      );
+    }
 
     return data;
   };
@@ -288,6 +389,15 @@ export function SettingsPage() {
     }
 
     setIsSyncingNow(true);
+    if (syncStatusStorageKey && typeof window !== "undefined") {
+      const payload = {
+        syncing: true,
+        scope: `manual:${selectedWalletId ?? "all"}`,
+        updatedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(syncStatusStorageKey, JSON.stringify(payload));
+      window.dispatchEvent(new CustomEvent("tradelog:sync-status", { detail: payload }));
+    }
     try {
       if (selectedWalletId === null) {
         for (const wallet of wallets) {
@@ -309,6 +419,104 @@ export function SettingsPage() {
       toast.error(error?.message || "Sync failed");
     } finally {
       setIsSyncingNow(false);
+      if (syncStatusStorageKey && typeof window !== "undefined") {
+        const payload = {
+          syncing: false,
+          scope: `manual:${selectedWalletId ?? "all"}`,
+          updatedAt: new Date().toISOString(),
+        };
+        localStorage.setItem(syncStatusStorageKey, JSON.stringify(payload));
+        window.dispatchEvent(new CustomEvent("tradelog:sync-status", { detail: payload }));
+      }
+    }
+  };
+
+  const escapeCsvCell = (value: unknown): string => {
+    if (value === null || value === undefined) return "";
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+
+  const handleExportJournalCsv = async () => {
+    if (!dbUserId) {
+      toast.error("User not ready yet.");
+      return;
+    }
+
+    setIsExportingCsv(true);
+    try {
+      let url = `/api/journal/entries?userId=${dbUserId}`;
+      if (selectedWalletId !== null) {
+        url += `&walletId=${selectedWalletId}`;
+      }
+
+      const response = await fetch(url);
+      const data = await response.json().catch(() => []);
+      if (!response.ok) {
+        throw new Error(data?.error || "Failed to export journal entries.");
+      }
+
+      const entries = Array.isArray(data) ? data : [];
+      const headers = [
+        "id",
+        "user_id",
+        "wallet_id",
+        "tx_hash",
+        "is_journaled",
+        "is_flagged",
+        "notes",
+        "tags",
+        "what_went_well",
+        "what_went_wrong",
+        "what_will_i_do_differently",
+        "created_at",
+        "updated_at",
+      ];
+
+      const rows = [
+        headers.map((header) => escapeCsvCell(header)).join(","),
+        ...entries.map((entry: Record<string, unknown>) =>
+          headers.map((header) => escapeCsvCell(entry?.[header])).join(",")
+        ),
+      ];
+
+      const csvBlob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const walletSuffix = selectedWalletId === null ? "all-wallets" : `wallet-${selectedWalletId}`;
+      const filename = `journal-entries-${walletSuffix}-${new Date().toISOString().slice(0, 10)}.csv`;
+
+      const link = document.createElement("a");
+      const objectUrl = URL.createObjectURL(csvBlob);
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objectUrl);
+
+      toast.success(`Exported ${entries.length} journal entr${entries.length === 1 ? "y" : "ies"}.`);
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to export CSV");
+    } finally {
+      setIsExportingCsv(false);
+    }
+  };
+
+  const handleClearLocalCache = () => {
+    if (typeof window === "undefined") return;
+    try {
+      clearCache();
+      Object.keys(localStorage)
+        .filter(
+          (key) =>
+            key.startsWith("tradelog:cache:") ||
+            (key.startsWith("tradelog:") && key.toLowerCase().includes("cache"))
+        )
+        .forEach((key) => localStorage.removeItem(key));
+      toast.success("Local cache cleared.");
+    } catch {
+      toast.error("Failed to clear local cache.");
+    } finally {
+      setIsClearCacheModalOpen(false);
     }
   };
 
@@ -326,6 +534,22 @@ export function SettingsPage() {
           <CardTitle className="text-white">Wallets</CardTitle>
         </CardHeader>
         <CardContent>
+          <div className="flex justify-end mb-3">
+            <Button
+              size="sm"
+              onClick={() => setIsLinkWalletModalOpen(true)}
+              disabled={
+                connectedWalletAlreadyAdded
+              }
+              title={
+                connectedWalletAlreadyAdded
+                  ? "Already added"
+                  : undefined
+              }
+            >
+              {connectedWalletAlreadyAdded ? "Already added" : "Add wallet"}
+            </Button>
+          </div>
           {isLoadingWallets ? (
             <p className="text-sm text-muted-foreground">Loading wallets...</p>
           ) : wallets.length === 0 ? (
@@ -343,6 +567,8 @@ export function SettingsPage() {
                 <TableBody>
                   {wallets.map((wallet) => {
                     const isDefault = selectedWalletId === wallet.id;
+                    const removeBlockedReason = getRemoveBlockedReason(wallet);
+                    const removeDisabled = !!removeBlockedReason;
                     return (
                       <TableRow key={wallet.id}>
                         <TableCell className="font-medium text-white">{displayWalletName(wallet)}</TableCell>
@@ -360,7 +586,20 @@ export function SettingsPage() {
                           <Button size="sm" variant="outline" onClick={() => openRenameModal(wallet)}>
                             Rename
                           </Button>
-                          <Button size="sm" variant="destructive" onClick={() => openRemoveModal(wallet)}>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            aria-disabled={removeDisabled}
+                            className={removeDisabled ? "opacity-50 cursor-not-allowed" : ""}
+                            title={removeBlockedReason || undefined}
+                            onClick={() => {
+                              if (removeBlockedReason) {
+                                toast.error(removeBlockedReason);
+                                return;
+                              }
+                              openRemoveModal(wallet);
+                            }}
+                          >
                             Remove
                           </Button>
                         </TableCell>
@@ -415,10 +654,17 @@ export function SettingsPage() {
                   Sync the active wallet, or all wallets sequentially when "All wallets" is selected.
                 </p>
               </div>
-              <Button size="sm" onClick={handleSyncNow} disabled={isSyncingNow || wallets.length === 0}>
+              <Button
+                size="sm"
+                onClick={handleSyncNow}
+                disabled={isSyncingNow || isAutoSyncing || wallets.length === 0}
+              >
                 {isSyncingNow ? "Syncing..." : "Sync now"}
               </Button>
             </div>
+            {(isSyncingNow || isAutoSyncing) && (
+              <p className="text-xs text-muted-foreground">Syncing in progress...</p>
+            )}
 
             <div className="space-y-1">
               {wallets.length === 0 ? (
@@ -442,8 +688,35 @@ export function SettingsPage() {
         <CardHeader>
           <CardTitle className="text-white">Account / Data</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          Account-level preferences and data tools will appear here.
+        <CardContent className="space-y-4">
+          <div className="rounded-md border border-border p-3 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-white">Export Journal Entries (CSV)</p>
+              <p className="text-xs text-muted-foreground">
+                Export entries for <span className="text-white">{activeWalletDisplay}</span>.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleExportJournalCsv}
+              disabled={isExportingCsv || !dbUserId}
+            >
+              {isExportingCsv ? "Exporting..." : "Export CSV"}
+            </Button>
+          </div>
+
+          <div className="rounded-md border border-border p-3 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-white">Clear Local Cache</p>
+              <p className="text-xs text-muted-foreground">
+                Removes cached `tradelog:*` cache keys only. Your login session remains active.
+              </p>
+            </div>
+            <Button size="sm" variant="destructive" onClick={() => setIsClearCacheModalOpen(true)}>
+              Clear Cache
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -518,6 +791,31 @@ export function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={isClearCacheModalOpen} onOpenChange={setIsClearCacheModalOpen}>
+        <DialogContent className="bg-card border-border">
+          <DialogHeader>
+            <DialogTitle>Clear Local Cache</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This clears local cached API data and does not log you out.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsClearCacheModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleClearLocalCache}>
+              Confirm Clear Cache
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <LinkWalletModal
+        open={isLinkWalletModalOpen}
+        onOpenChange={setIsLinkWalletModalOpen}
+        onLinked={handleWalletLinked}
+      />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useWallet } from "@solana/wallet-adapter-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import { HoldingsPage } from "@/components/HoldingsPage";
 import { Dashboard } from "@/components/Dashboard";
@@ -18,6 +18,7 @@ import TradeForm from "@/components/TradeForm";
 import { WalletFilterProvider, useWalletFilter } from "@/app/contexts/WalletFilterContext";
 import { WalletSelector } from "@/components/WalletSelector";
 import { cachedFetch } from "@/lib/cachedFetch";
+import { useAppSettings } from "@/lib/hooks/useAppSettings";
 
 function DashboardContent({
   dbUser,
@@ -54,6 +55,9 @@ function DashboardContent({
   const resolvedWalletAddress = selectedWallet?.wallet_address ?? (publicKey ? publicKey.toBase58() : null);
   const isDashboardDataReady = !isLoading && !walletFilterLoading && hasResolvedHoldings;
   const walletScope = selectedWalletId ?? "all";
+  const { settings } = useAppSettings(dbUser?.id);
+  const autoSyncDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSyncLastRunRef = useRef<Map<string, number>>(new Map());
 
   const applyHoldingsPayload = useCallback((data: any) => {
     const sourceHoldings =
@@ -166,6 +170,25 @@ function DashboardContent({
   const applyJournalPayload = useCallback((journalData: any) => {
     setJournalEvents(journalData || []);
   }, []);
+
+  const syncStatusStorageKey = useMemo(
+    () => (dbUser?.id ? `tradelog:syncState:${dbUser.id}` : null),
+    [dbUser?.id]
+  );
+
+  const setSyncStatus = useCallback(
+    (syncing: boolean, scope: string) => {
+      if (!syncStatusStorageKey || typeof window === "undefined") return;
+      const payload = {
+        syncing,
+        scope,
+        updatedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(syncStatusStorageKey, JSON.stringify(payload));
+      window.dispatchEvent(new CustomEvent("tradelog:sync-status", { detail: payload }));
+    },
+    [syncStatusStorageKey]
+  );
 
   useEffect(() => {
     const fetchData = async () => {
@@ -298,6 +321,9 @@ function DashboardContent({
   ]);
 
   useEffect(() => {
+    if (!settings.preloadDataInBackground) {
+      return;
+    }
     if (!dbUser?.id || walletFilterLoading) {
       return;
     }
@@ -354,6 +380,22 @@ function DashboardContent({
         ? `/api/trades?userId=${userId}`
         : `/api/trades?userId=${userId}&walletId=${selectedWalletId}`;
 
+    const fetchJournalActivity = async () => {
+      const res = await fetch(journalActivityUrl);
+      if (!res.ok) {
+        throw new Error("Failed to prefetch journal activity");
+      }
+      return res.json();
+    };
+
+    const fetchJournalEntries = async () => {
+      const res = await fetch(journalEntriesUrl);
+      if (!res.ok) {
+        throw new Error("Failed to prefetch journal entries");
+      }
+      return res.json();
+    };
+
     const tasks: Promise<unknown>[] = [
       cachedFetch({
         key: `dashboard:${userId}:${walletKey}`,
@@ -366,7 +408,7 @@ function DashboardContent({
         },
       }),
       cachedFetch({
-        key: `trades:${userId}:${walletKey}`,
+        key: `trades-list:${userId}:${walletKey}`,
         fetcher: async () => {
           const res = await fetch(tradesUrl);
           if (!res.ok) {
@@ -376,23 +418,65 @@ function DashboardContent({
         },
       }),
       cachedFetch({
-        key: `journal:${userId}:${walletKey}`,
-        fetcher: async () => {
-          const res = await fetch(journalActivityUrl);
-          if (!res.ok) {
-            throw new Error("Failed to prefetch journal activity");
-          }
-          return res.json();
-        },
+        key: `journal-activity:${userId}:${walletKey}`,
+        fetcher: fetchJournalActivity,
       }),
       cachedFetch({
         key: `journal-entries:${userId}:${walletKey}`,
+        fetcher: fetchJournalEntries,
+      }),
+      cachedFetch({
+        key: `trades:${userId}:${walletKey}`,
         fetcher: async () => {
-          const res = await fetch(journalEntriesUrl);
-          if (!res.ok) {
-            throw new Error("Failed to prefetch journal entries");
+          const [tradesRes, entriesRes] = await Promise.all([
+            fetch(tradesUrl),
+            fetchJournalEntries(),
+          ]);
+          if (!tradesRes.ok) {
+            throw new Error("Failed to prefetch trades data");
           }
-          return res.json();
+          const tradesData = await tradesRes.json();
+          return {
+            trades: tradesData || [],
+            entries: Array.isArray(entriesRes) ? entriesRes : [],
+          };
+        },
+      }),
+      cachedFetch({
+        key: `journal:${userId}:${walletKey}`,
+        fetcher: async () => {
+          const [activityData, entriesData] = await Promise.all([
+            fetchJournalActivity(),
+            fetchJournalEntries().catch(() => []),
+          ]);
+          const journalMap = new Map(
+            (Array.isArray(entriesData) ? entriesData : []).map((entry: any) => [entry.tx_hash, entry])
+          );
+
+          return (Array.isArray(activityData) ? activityData : [])
+            .map((event: any) => {
+              const journalKey = event.transaction_hash || event.id;
+              const journalEntry = journalMap.get(journalKey);
+              if (journalEntry) {
+                return {
+                  ...event,
+                  notes: journalEntry.notes,
+                  tags: journalEntry.tags,
+                  is_flagged: journalEntry.is_flagged,
+                  what_went_well: journalEntry.what_went_well,
+                  what_went_wrong: journalEntry.what_went_wrong,
+                  what_will_i_do_differently: journalEntry.what_will_i_do_differently,
+                  is_journaled: true,
+                  journal_updated_at: journalEntry.updated_at,
+                };
+              }
+              return { ...event, is_journaled: false };
+            })
+            .sort((a: any, b: any) => {
+              const dateA = a.journal_updated_at ? new Date(a.journal_updated_at) : new Date(a.date);
+              const dateB = b.journal_updated_at ? new Date(b.journal_updated_at) : new Date(b.date);
+              return dateB.getTime() - dateA.getTime();
+            });
         },
       }),
     ];
@@ -427,6 +511,7 @@ function DashboardContent({
 
     void Promise.allSettled(tasks);
   }, [
+    settings.preloadDataInBackground,
     dbUser?.id,
     selectedWalletId,
     selectedWallet?.wallet_address,
@@ -434,6 +519,89 @@ function DashboardContent({
     walletFilterLoading,
     filterWallets?.length,
     resolvedWalletAddress,
+  ]);
+
+  useEffect(() => {
+    if (!settings.autoSyncOnLogin) {
+      return;
+    }
+    if (!dbUser?.id || walletFilterLoading) {
+      return;
+    }
+
+    const targets =
+      selectedWalletId === null
+        ? filterWallets
+        : selectedWallet
+          ? [selectedWallet]
+          : [];
+
+    if (!targets.length) {
+      return;
+    }
+
+    const scope = `${dbUser.id}:${selectedWalletId ?? "all"}:${targets
+      .map((wallet: any) => wallet.id)
+      .join(",")}`;
+    const lastRun = autoSyncLastRunRef.current.get(scope) || 0;
+    if (Date.now() - lastRun < 45_000) {
+      return;
+    }
+
+    if (autoSyncDebounceRef.current) {
+      clearTimeout(autoSyncDebounceRef.current);
+    }
+
+    autoSyncDebounceRef.current = setTimeout(() => {
+      void (async () => {
+        setSyncStatus(true, scope);
+        try {
+          for (const wallet of targets) {
+            const response = await fetch("/api/journal/sync", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userId: dbUser.id,
+                walletAddress: wallet.wallet_address,
+              }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(data?.error || "Auto-sync failed");
+            }
+
+            const nextTimestamp = data?.last_synced_at || new Date().toISOString();
+            const key = `tradelog:lastSyncedAt:${wallet.id}`;
+            localStorage.setItem(key, nextTimestamp);
+            window.dispatchEvent(
+              new CustomEvent("tradelog:wallet-synced", {
+                detail: { walletId: wallet.id, timestamp: nextTimestamp },
+              })
+            );
+          }
+
+          autoSyncLastRunRef.current.set(scope, Date.now());
+        } catch (error) {
+          console.error("Auto-sync error:", error);
+        } finally {
+          setSyncStatus(false, scope);
+        }
+      })();
+    }, 1000);
+
+    return () => {
+      if (autoSyncDebounceRef.current) {
+        clearTimeout(autoSyncDebounceRef.current);
+      }
+    };
+  }, [
+    settings.autoSyncOnLogin,
+    dbUser?.id,
+    walletFilterLoading,
+    selectedWalletId,
+    selectedWallet,
+    filterWallets,
+    setSyncStatus,
   ]);
 
   const renderMainContent = () => {

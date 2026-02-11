@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     return NextResponse.json(data);
   } catch (error: any) {
     console.error("Holdings proxy route error:", error);
-    return NextResponse.json(
+    return NextRespnse.json(
       { error: "Failed to fetch holdings", details: error?.message || "Unknown error" },
       { status: 500 }
     );

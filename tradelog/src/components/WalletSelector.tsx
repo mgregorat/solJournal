@@ -1,7 +1,7 @@
 "use client";
 
+import { useState } from "react";
 import { useWalletFilter } from "@/app/contexts/WalletFilterContext";
-import { useWallet } from "@solana/wallet-adapter-react";
 import { User } from "@/lib/types";
 import { shortenAddress } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Check, ChevronsUpDown } from "lucide-react";
 import toast from 'react-hot-toast';
+import { LinkWalletModal } from "@/components/LinkWalletModal";
 
 interface WalletSelectorProps {
   dbUser: User | null;
@@ -22,42 +23,11 @@ interface WalletSelectorProps {
 
 export const WalletSelector = ({ dbUser }: WalletSelectorProps) => {
   const { wallets, selectedWalletId, selectedWallet, setSelectedWalletId, refreshWallets, loading } = useWalletFilter();
-  const { publicKey, connected } = useWallet();
+  const [isLinkWalletModalOpen, setIsLinkWalletModalOpen] = useState(false);
 
-  const handleAddCurrentWallet = async () => {
-    if (!publicKey || !dbUser) {
-      toast.error("Please connect your wallet first.");
-      return;
-    }
-
-    const walletAddress = publicKey.toBase58();
-
-    try {
-      const response = await fetch('/api/wallets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: dbUser.id, walletAddress }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to add wallet");
-      }
-      
-      const newWallet = await response.json();
-      
-      toast.success("Wallet added successfully!");
-      
-      await refreshWallets();
-
-      // Auto-select the newly added wallet
-      if (newWallet && newWallet.id) {
-        setSelectedWalletId(newWallet.id);
-      }
-
-    } catch (error) {
-      console.error("Error adding wallet:", error);
-      toast.error("An error occurred while adding the wallet.");
-    }
+  const handleWalletLinked = async (wallet: { id: number }) => {
+    await refreshWallets();
+    setSelectedWalletId(wallet.id);
   };
 
   const handleRenameSelectedWallet = async () => {
@@ -127,7 +97,7 @@ export const WalletSelector = ({ dbUser }: WalletSelectorProps) => {
           <DropdownMenuItem onSelect={handleRenameSelectedWallet} disabled={selectedWalletId === null || !dbUser}>
             Rename Selected Wallet
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={handleAddCurrentWallet} disabled={!connected}>
+          <DropdownMenuItem onSelect={() => setIsLinkWalletModalOpen(true)} disabled={!dbUser}>
             Add Current Wallet
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -135,6 +105,11 @@ export const WalletSelector = ({ dbUser }: WalletSelectorProps) => {
       <Badge variant="secondary" className="max-w-56 truncate">
         Active: {activeWalletText}
       </Badge>
+      <LinkWalletModal
+        open={isLinkWalletModalOpen}
+        onOpenChange={setIsLinkWalletModalOpen}
+        onLinked={handleWalletLinked}
+      />
     </div>
   );
 };
