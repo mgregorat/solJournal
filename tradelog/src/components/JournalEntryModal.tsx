@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { MultiSelect } from "@/components/ui/multi-select";
 import toast from "react-hot-toast";
+import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
 
 type JournalInitialValues = {
   notes?: string;
@@ -54,6 +56,8 @@ export function JournalEntryModal({
   tradeDate,
   sellTxHash,
 }: JournalEntryModalProps) {
+  const { getAccessToken } = usePrivy();
+  const getBearerToken = async () => (await getAccessToken?.()) || null;
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [whatWentWell, setWhatWentWell] = useState("");
@@ -76,15 +80,14 @@ export function JournalEntryModal({
   );
 
   const handleSave = async () => {
-    if (!userId || !walletId || !tx_hash) return;
+    if (!walletId || !tx_hash) return;
     setIsSaving(true);
     try {
-      const response = await fetch("/api/journal/flag", {
+      const response = await authedFetchClient(getBearerToken, "/api/journal/flag", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tx_hash,
-          userId,
           walletId,
           is_journaled: true,
           is_flagged: initialValues.is_flagged,
@@ -96,12 +99,8 @@ export function JournalEntryModal({
         }),
       });
 
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to save journal entry");
-      }
-
-      const savedJournalEntry = Array.isArray(payload?.data) ? payload.data[0] : payload?.data;
+      const payload = await parseApiResponse<any>(response);
+      const savedJournalEntry = Array.isArray(payload) ? payload[0] : payload;
       if (!savedJournalEntry) {
         throw new Error("Save returned no journal entry");
       }
@@ -201,4 +200,3 @@ export function JournalEntryModal({
     </Dialog>
   );
 }
-

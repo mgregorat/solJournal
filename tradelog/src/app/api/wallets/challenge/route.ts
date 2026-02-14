@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { randomBytes } from "crypto";
 import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
 import { getDbUserFromPrivy } from "@/app/lib/privyServerAuth";
+import { throwHttp, withTiming } from "@/app/lib/http";
 
 const SOLANA_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
@@ -27,16 +28,16 @@ function buildChallengeMessage(params: {
 }
 
 export async function POST(req: NextRequest) {
-  try {
+  return withTiming(req, async () => {
     const dbUser = await getDbUserFromPrivy(req);
     if (!dbUser) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      throwHttp("unauthorized", "Unauthorized", 401);
     }
 
     const body = await req.json().catch(() => ({}));
     const walletAddress = body?.walletAddress;
     if (!isValidSolanaAddress(walletAddress)) {
-      return NextResponse.json({ error: "Invalid walletAddress" }, { status: 400 });
+      throwHttp("bad_request", "Invalid walletAddress", 400);
     }
 
     const now = new Date();
@@ -67,19 +68,11 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (!error) {
-        if (process.env.NODE_ENV !== "production") {
-          console.log("[wallets/challenge] nonce created", {
-            userId: dbUser.id,
-            walletAddress,
-            expiresAt,
-            nonceRowId: insertedNonceRow?.id ?? null,
-          });
-        }
-        return NextResponse.json({
+        return {
           nonce,
           message,
           expiresAt,
-        });
+        };
       }
 
       lastError = error;
@@ -89,11 +82,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json(
-      { error: "Failed to create wallet link challenge", details: (lastError as any)?.message || "Unknown error" },
-      { status: 500 }
-    );
-  } catch {
-    return NextResponse.json({ error: "Failed to create wallet link challenge" }, { status: 500 });
-  }
+    throwHttp("internal_error", "Failed to create wallet link challenge", 500);
+  });
 }

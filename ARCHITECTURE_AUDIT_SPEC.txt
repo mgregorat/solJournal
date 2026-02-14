@@ -1,0 +1,430 @@
+========================================================
+SOLJOURNAL ARCHITECTURE AUDIT SPEC
+========================================================
+
+SECTION 1 — AUTHENTICATION & IDENTITY MODEL
+- What must be audited
+  - All API routes require Bearer token except explicit public routes.
+  - Privy JWT verification path: signature verification, issuer, audience, exp, nbf, iat, kid rotation handling.
+  - Mapping from Privy subject (DID/sub) to internal user record is unique and immutable.
+  - No endpoint accepts userId from client for authorization decisions.
+  - Server-side auth context propagation is consistent across route handlers, background jobs, and webhooks.
+- Invariants that must always hold true
+  - Every authenticated request resolves exactly one internal user.
+  - Privy subject uniquely identifies one user row.
+  - Expired/invalid token never returns partial protected data.
+  - Authentication failure responses are consistent (401 + sanitized error).
+- Common failure cases
+  - Accepting stale token due to clock skew misconfiguration.
+  - Missing audience/issuer checks leading to token confusion.
+  - Fallback to unsigned decode when verification fails.
+  - Multiple user rows for same Privy subject.
+- Attack vectors to check
+  - JWT replay within valid window from compromised clients.
+  - Algorithm confusion (alg=none or wrong alg acceptance).
+  - Token substitution across environments (dev token accepted in prod).
+  - Session fixation via cached auth context in server runtime.
+- Code smells to search for
+  - `decode(` without verify.
+  - `userId` read from query/body for auth.
+  - `if (!token) continue` style permissive branches.
+  - Broad `catch {}` that converts auth failures to success path.
+- What logs must exist
+  - Auth decision log per request: requestId, route, authResult, subject hash, statusCode, duration.
+  - Token verification failure reason taxonomy (signature, exp, aud, iss, malformed).
+  - No raw token logging.
+- What test cases must exist
+  - Valid token passes and resolves expected user.
+  - Invalid signature, wrong aud/iss, expired token return 401.
+  - Missing token returns 401 on protected routes.
+  - Same Privy subject cannot create duplicate users under concurrency.
+
+SECTION 2 — WALLET LINKING SYSTEM
+- What must be audited
+  - Wallet link challenge generation, nonce entropy, expiration, single-use enforcement.
+  - Signature verification for Solana addresses and message domain binding.
+  - Link flow ensures wallet cannot be linked to multiple users unless explicitly supported.
+  - Link and unlink endpoints are idempotent and ownership-checked.
+- Invariants that must always hold true
+  - Wallet link requires proof-of-control signature for new address.
+  - Challenge nonce is random, short-lived, and invalidated on success/failure.
+  - Linked wallet row always includes user_id, normalized address, created_at.
+- Common failure cases
+  - Reusing old nonce due to missing consumed_at check.
+  - Accepting signature over ambiguous message.
+  - Address normalization mismatch causing duplicate logical wallets.
+- Attack vectors to check
+  - Replay attack with previously captured signed challenge.
+  - Wallet spoof via mixed-case/whitespace address parsing.
+  - CSRF-like trigger if link endpoint accepts cookie auth without anti-CSRF.
+- Code smells to search for
+  - Nonce stored without expiry.
+  - Signature verification not bound to nonce+domain+timestamp.
+  - Wallet linking allowed when `walletAddress` only is provided without signature.
+- What logs must exist
+  - Challenge lifecycle logs: created, consumed, expired, rejected.
+  - Wallet link attempts: user hash, wallet hash, outcome code.
+  - Duplicate-link conflict logs.
+- What test cases must exist
+  - Challenge cannot be reused.
+  - Expired challenge rejected.
+  - Signature for different nonce rejected.
+  - Concurrent linking same wallet by two users results in one success, one conflict.
+
+SECTION 3 — WALLET OWNERSHIP ENFORCEMENT
+- What must be audited
+  - Every wallet-scoped endpoint verifies wallet belongs to authenticated user before query execution.
+  - SQL filters include both `wallet_id` and `user_id` where relevant.
+  - Address fallback path enforces ownership equivalently to wallet_id path.
+- Invariants that must always hold true
+  - No data access based solely on wallet address without ownership check.
+  - Unauthorized wallet access always returns 403 (not 404 if policy requires explicit deny).
+  - Ownership checks happen before expensive downstream calls.
+- Common failure cases
+  - Endpoint validates wallet on one branch but not another (e.g., `showAll` path).
+  - Trusting client-selected `walletId` from cache without server verification.
+  - Background aggregation route skipping ownership checks for previews.
+- Attack vectors to check
+  - IDOR via incrementing walletId.
+  - Cross-tenant inference by timing differences on missing vs unauthorized wallet.
+  - Metadata leakage in error messages.
+- Code smells to search for
+  - Query patterns: `where wallet_id = ?` without `user_id`.
+  - Optional ownership check behind feature flag.
+  - Early returns that bypass auth for “internal” query params.
+- What logs must exist
+  - Authorization decision logs with walletId hash and decision reason.
+  - Forbidden access attempts count and source IP hash.
+- What test cases must exist
+  - User A cannot fetch holdings/trades/journal for User B walletId.
+  - Address fallback rejects non-owned address.
+  - Every wallet route has explicit ownership unit/integration test.
+
+SECTION 4 — API RESPONSE CONTRACT STANDARDIZATION
+- What must be audited
+  - All GET/POST routes return standardized envelope:
+    - Success: `{ ok: true, data, meta? }`
+    - Error: `{ ok: false, error: { code, message }, meta? }`
+  - Stable status code mapping per error class.
+  - No route returns raw provider payload as top-level response.
+- Invariants that must always hold true
+  - `ok` boolean always present.
+  - Error responses always include machine-readable `code`.
+  - Sensitive internals never included in `message`.
+- Common failure cases
+  - Mixed response shapes causing client parser divergence.
+  - 200 responses containing error strings.
+  - Empty body on errors breaking client fetch logic.
+- Attack vectors to check
+  - Error reflection of upstream provider internals.
+  - Header injection via unvalidated meta fields.
+- Code smells to search for
+  - `return NextResponse.json(data)` without envelope helper.
+  - `res.status(200).json({ error: ... })`.
+  - Inconsistent `code` enum strings across routes.
+- What logs must exist
+  - Response contract validator warnings in non-prod.
+  - Route-level status code histogram.
+- What test cases must exist
+  - Contract tests for each route shape and status.
+  - Snapshot tests for error payload structure.
+  - Non-JSON upstream failure still maps to standardized error envelope.
+
+SECTION 5 — DASHBOARD BOOTSTRAP ARCHITECTURE
+- What must be audited
+  - Aggregated bootstrap endpoint consolidates wallets, selected wallet summary, metrics, holdings preview, pnl, recent trades, journal activity.
+  - Parallel subqueries with bounded timeout per component.
+  - Partial failure handling returns `meta.partial=true` and structured `meta.errors[]`.
+- Invariants that must always hold true
+  - Bootstrap never blocks entire response due to one subquery failure.
+  - Selected wallet in response is ownership-verified.
+  - Response includes generated timestamp and cache status metadata.
+- Common failure cases
+  - Waterfall query chain increasing p95 latency.
+  - Duplicate calls from multiple components at initial load.
+  - Aggregator silently dropping failed sections without metadata.
+- Attack vectors to check
+  - Over-fetch abuse via unbounded preview sizes.
+  - Parameter tampering to force heavy scans.
+- Code smells to search for
+  - Sequential awaits where Promise.all is possible.
+  - Missing timeout/abort around provider calls.
+  - Shared mutable object updated from parallel branches.
+- What logs must exist
+  - Subquery timing per bootstrap section.
+  - Partial response reasons and degraded mode markers.
+- What test cases must exist
+  - One subquery fail still returns other sections.
+  - Ownership failure for selected wallet returns 403 without partial data leak.
+  - p95 latency threshold test under load profile.
+
+SECTION 6 — HOLDINGS FETCH PIPELINE (GMGN + RPC)
+- What must be audited
+  - Primary GMGN integration endpoint correctness (path, params, pagination, token list fields).
+  - Deterministic fallback to RPC/Helius/cached snapshot when GMGN returns null/invalid/timeout.
+  - SOL balance derivation correctness and decimal handling.
+  - Dust filter threshold logic and `showAll` override behavior.
+- Invariants that must always hold true
+  - Holdings response always includes source meta: `gmgn|rpc|cache`.
+  - If GMGN fails, fallback path executes unless explicitly disabled.
+  - SOL is never omitted when RPC data is available.
+- Common failure cases
+  - Treating null list as empty holdings instead of fallback trigger.
+  - Decimal conversion errors leading to $0 SOL.
+  - Mixing wallet address and wallet id scope inconsistently.
+- Attack vectors to check
+  - Upstream payload poisoning causing parser crashes.
+  - Cache key collision across wallets.
+  - Provider response replay served as fresh without TTL metadata.
+- Code smells to search for
+  - `holdings = []` in broad catch blocks.
+  - No schema validation for provider response.
+  - Floating-point math for token amounts without decimal normalization safeguards.
+- What logs must exist
+  - Provider call result: source, status, duration, tokenCount, fallbackTriggered.
+  - Dust-filter stats: preCount, postCount, threshold.
+- What test cases must exist
+  - GMGN null list triggers RPC fallback.
+  - RPC failure with cache available returns cache with stale marker.
+  - SOL balance correctness test with known fixture wallet.
+  - `showAll` returns superset of filtered holdings.
+
+SECTION 7 — CLIENT DATA FETCH LAYER
+- What must be audited
+  - Single wallet-scoped cache/store keyed by walletId (address fallback only where required).
+  - Stale-while-revalidate: immediate cached render + background refresh.
+  - Request deduplication per key and per tab slice.
+  - Uniform error handling that preserves prior UI state on failures/401.
+- Invariants that must always hold true
+  - Latest wallet selection owns latest state updates.
+  - Aborted/stale responses cannot overwrite current state.
+  - No tab clears data to empty on transient failure.
+- Common failure cases
+  - Effect executes before wallet context ready and never retries.
+  - Multiple fetches racing and stale request wins.
+  - Loading spinner persists when wallet is null.
+- Attack vectors to check
+  - Client-side cache poisoning through unsanitized keys.
+  - Excessive refetch loops causing self-DoS.
+- Code smells to search for
+  - `useEffect(..., [])` for wallet-scoped fetches.
+  - Setting `data=[]` inside catch.
+  - Missing `AbortController` cleanup in effects.
+- What logs must exist
+  - Dev-only fetch trace: requestId, key, walletId, start/end, status, staleDiscarded.
+  - Cache hit/miss/revalidate markers.
+- What test cases must exist
+  - Rapid wallet switch (5x) only last request updates UI.
+  - Tab navigation back-and-forth does not blank data.
+  - 401 triggers reconnect flow while keeping last data visible.
+  - No fetch when wallet selection is null; explicit select-wallet UI shown.
+
+SECTION 8 — DATABASE INTEGRITY & CONSTRAINTS
+- What must be audited
+  - Unique constraints: users(privy_subject), wallets(normalized_address), user_wallet relation policy.
+  - Foreign keys between trades/journal entries/wallets/users with ON DELETE strategy.
+  - Check constraints for enums (trade side/type), non-negative numeric fields.
+  - Created/updated timestamps and audit columns.
+- Invariants that must always hold true
+  - No orphan trade/journal rows without valid wallet/user.
+  - Wallet address normalization applied before persistence.
+  - Duplicate transaction hash handling follows defined idempotency policy.
+- Common failure cases
+  - Missing composite index causing slow wallet/user queries.
+  - Soft delete without filtering leads to ghost data.
+  - Decimal precision drift due to wrong column types.
+- Attack vectors to check
+  - SQL injection via dynamic filters/order clauses.
+  - Data exfiltration from misconfigured row-level security.
+- Code smells to search for
+  - Text columns storing numeric money values.
+  - Migrations without backfill/validation scripts.
+  - Runtime schema assumptions not enforced in DB.
+- What logs must exist
+  - Migration apply logs with checksum/version.
+  - Constraint violation logs by table/constraint.
+- What test cases must exist
+  - Migration rollback/forward idempotency.
+  - Insert duplicate wallet normalized address conflict behavior.
+  - FK integrity tests for delete/update scenarios.
+
+SECTION 9 — MULTI-WALLET & PLAN LIMIT ENFORCEMENT
+- What must be audited
+  - Plan policy source of truth (free vs paid wallet limit) enforced server-side.
+  - Wallet add/link endpoints enforce limit atomically.
+  - UI reflects plan limits but server remains authoritative.
+- Invariants that must always hold true
+  - User cannot exceed plan wallet limit via concurrent requests.
+  - Existing linked wallets remain selectable without re-verification.
+  - Plan downgrade behavior is deterministic and non-destructive.
+- Common failure cases
+  - Limit checked in client only.
+  - Race condition allows +1 wallet over cap.
+  - Wallet selector includes unowned wallets due to stale cache.
+- Attack vectors to check
+  - Parallel link requests to bypass limit.
+  - Plan spoof via tampered client claims.
+- Code smells to search for
+  - `if (isPro)` branches from client-provided flags.
+  - Count query and insert not wrapped in transaction/lock.
+- What logs must exist
+  - Limit enforcement rejections with plan tier and current count.
+  - Plan change events and resulting effective limits.
+- What test cases must exist
+  - Concurrent link attempts at boundary enforce strict cap.
+  - Upgrade/downgrade transitions preserve access rules.
+  - Free-tier user cannot call paid-only endpoints.
+
+SECTION 10 — PERFORMANCE & CACHING STRATEGY
+- What must be audited
+  - Cache layers: in-memory, distributed, DB snapshot; ownership-safe keys.
+  - TTL policy per dataset (holdings short TTL, journal/trades medium, static config long).
+  - Cache invalidation on wallet switch, link/unlink, sync completion.
+  - RPC call budgeting and batching strategy.
+- Invariants that must always hold true
+  - Cache key includes tenant scope (user+wallet).
+  - Stale data served with explicit freshness metadata.
+  - Expensive calls protected by timeout + circuit breaker.
+- Common failure cases
+  - Cache stampede on cold start.
+  - Unbounded cache growth.
+  - Revalidation loops caused by mismatched keys.
+- Attack vectors to check
+  - Cache key injection via raw query strings.
+  - Forced cache miss attacks by random parameter noise.
+- Code smells to search for
+  - No TTL specified for volatile data.
+  - Repeated identical upstream requests within same request lifecycle.
+  - Absence of max concurrency guards for RPC providers.
+- What logs must exist
+  - Cache hit/miss/set metrics by route and key class.
+  - RPC call count, error rate, and unit cost estimate.
+- What test cases must exist
+  - Load test for 10k concurrent users with acceptable p95/p99.
+  - Stampede simulation for same wallet holdings key.
+  - Cache invalidation test after wallet sync event.
+
+SECTION 11 — FAILURE MODE ANALYSIS
+- What must be audited
+  - Explicit state machine for each tab: idle_no_wallet, loading_initial, loaded, updating, error_transient.
+  - Retry/backoff policies for provider and internal API failures.
+  - Distinction between transient and terminal errors.
+- Invariants that must always hold true
+  - UI never enters permanent loading due to null wallet/aborted fetch.
+  - Transient failures do not wipe previously rendered data.
+  - Fatal auth errors do not leak stale cross-user data.
+- Common failure cases
+  - Aborted request treated as hard error.
+  - Non-JSON error body crashes parser.
+  - 401 handling loops causing repeated login prompts.
+- Attack vectors to check
+  - Intentional request cancellation storms to induce inconsistent state.
+  - Triggering partial failures to infer private data from timing.
+- Code smells to search for
+  - Global catch that suppresses error type.
+  - `finally { setLoading(false) }` without requestId guard.
+  - No timeout for upstream provider calls.
+- What logs must exist
+  - Failure taxonomy counters by error code and route.
+  - Abort/stale-discard metrics.
+  - Reconnect flow state transitions.
+- What test cases must exist
+  - Token expiry mid-session preserves old UI and triggers reconnect.
+  - Provider timeout returns degraded response with explicit metadata.
+  - Abort race tests verify stale response discard.
+
+SECTION 12 — OBSERVABILITY & LOGGING
+- What must be audited
+  - Structured logging format with requestId, user hash, wallet hash, route, status, duration.
+  - Correlation IDs propagated from client to backend to upstream adapters.
+  - Metrics and traces for API, DB, cache, provider calls.
+- Invariants that must always hold true
+  - No secrets in logs (tokens, signatures, raw PII).
+  - All errors have code + stack reference in secure sink.
+  - Sampling policy retains security/auth failures at full rate.
+- Common failure cases
+  - Console logging raw payloads from providers.
+  - Missing context fields making incidents unactionable.
+  - Inconsistent error codes across services.
+- Attack vectors to check
+  - Log injection via unsanitized user inputs.
+  - Sensitive data exposure in error serialization.
+- Code smells to search for
+  - `console.log(req.headers.authorization)`.
+  - Logging entire request/response bodies by default.
+  - Plain string logs without structured fields.
+- What logs must exist
+  - Auth decisions, ownership denials, wallet link attempts.
+  - Provider fallback events and cache source selection.
+  - Rate-limit triggers and abuse detections.
+- What test cases must exist
+  - Log redaction unit tests.
+  - Observability contract test ensures mandatory fields on each request log.
+  - Alert test for elevated 401/403/5xx rates.
+
+SECTION 13 — AI READINESS REQUIREMENTS
+- What must be audited
+  - Trade records have canonical schema (side, size, price, fees, timestamp, wallet, tx hash, source).
+  - Journal entries are linked to trades deterministically (tx hash + wallet + user).
+  - Derived metrics (PnL, win rate, MAE/MFE) computed from consistent primitives.
+  - Missing/unknown values represented with explicit null semantics.
+- Invariants that must always hold true
+  - No duplicate trade events for same tx hash + wallet + user unless versioned.
+  - Journal tags and reflections use controlled vocab or validated free-text constraints.
+  - Timezone normalization is consistent (UTC persisted).
+- Common failure cases
+  - Inconsistent symbol/address mapping breaks aggregation.
+  - Backfilled trades missing fees/slippage fields.
+  - Journal linkage relying on fuzzy timestamp matching.
+- Attack vectors to check
+  - Prompt-injection style malicious journal text affecting downstream AI pipeline.
+  - Data poisoning via crafted trade metadata.
+- Code smells to search for
+  - Free-form JSON blobs without schema validation.
+  - AI features consuming unversioned fields.
+  - Silent coercion of invalid numeric strings.
+- What logs must exist
+  - Data quality score logs per ingestion batch.
+  - Schema validation failure counts and quarantine events.
+  - AI feature input version + record counts.
+- What test cases must exist
+  - Schema conformance tests for trade/journal payloads.
+  - Deterministic feature computation tests on golden datasets.
+  - Prompt sanitization tests for journal text preprocessing.
+
+SECTION 14 — PRODUCTION HARDENING CHECKLIST
+- Exact pass/fail checklist items
+  - PASS/FAIL: Every protected API route rejects missing/invalid Bearer token with 401.
+  - PASS/FAIL: Privy token verification enforces signature, iss, aud, exp, nbf.
+  - PASS/FAIL: No route authorizes from client-supplied userId.
+  - PASS/FAIL: Wallet linking uses nonce challenge with expiry and single-use consumption.
+  - PASS/FAIL: Wallet signature verification binds nonce + domain + timestamp.
+  - PASS/FAIL: Wallet ownership is enforced on every wallet-scoped endpoint before query execution.
+  - PASS/FAIL: Unauthorized wallet access returns 403 with sanitized error.
+  - PASS/FAIL: All API responses conform to envelope `{ok,data/meta}` or `{ok:false,error}`.
+  - PASS/FAIL: Error codes are stable and mapped to consistent HTTP statuses.
+  - PASS/FAIL: Dashboard bootstrap endpoint exists and aggregates required datasets.
+  - PASS/FAIL: Bootstrap runs parallel subqueries and returns partial mode metadata on sub-failure.
+  - PASS/FAIL: Holdings pipeline supports GMGN primary with deterministic RPC/cache fallback.
+  - PASS/FAIL: Holdings response includes source metadata and dust filter metadata.
+  - PASS/FAIL: SOL balance computation validated against known fixture wallets.
+  - PASS/FAIL: Client data layer preserves previous data on transient errors and 401.
+  - PASS/FAIL: All fetches support AbortController and cancel on wallet/tab/unmount changes.
+  - PASS/FAIL: Stale request responses are discarded via request sequencing.
+  - PASS/FAIL: No indefinite loading state when wallet is unselected.
+  - PASS/FAIL: Wallet plan limits are server-enforced and race-safe under concurrency.
+  - PASS/FAIL: DB has unique constraints and FKs for users, wallets, trades, journal entries.
+  - PASS/FAIL: Duplicate tx hash policy is defined and enforced.
+  - PASS/FAIL: Cache keys are tenant-scoped (user+wallet) and include TTL policy.
+  - PASS/FAIL: Cache invalidation occurs on wallet link/unlink/sync completion.
+  - PASS/FAIL: Rate limiting applied to auth, wallet-link, holdings, bootstrap endpoints.
+  - PASS/FAIL: Abuse protections exist for replay attempts and repeated forbidden access.
+  - PASS/FAIL: Structured logs include requestId, route, status, duration, sanitized subject/wallet hashes.
+  - PASS/FAIL: No secrets (tokens/signatures/raw PII) appear in logs.
+  - PASS/FAIL: Metrics and alerts configured for 401/403/429/5xx, latency, cache hit rate, RPC cost.
+  - PASS/FAIL: Load tests demonstrate acceptable p95/p99 at 10,000+ concurrent users.
+  - PASS/FAIL: AI input datasets pass schema/data-quality checks and are versioned.
+  - PASS/FAIL: Manual smoke tests pass: cold load, refresh, rapid wallet switching, tab switching, expired token, holdings fallback path.
+  - PASS/FAIL: Grep audit confirms no unsafe auth patterns, no userId URL auth params, and ownership checks in all wallet routes.
+
+========================================================

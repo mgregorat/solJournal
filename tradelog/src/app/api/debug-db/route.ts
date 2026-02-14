@@ -1,10 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { requireInternalRequest } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
-  try {
+export async function GET(request: NextRequest) {
+  return withTiming(request, async () => {
+    requireInternalRequest(request);
     // 1. Get Users
     const { data: users, error: usersError } = await supabaseAdmin
         .from('users')
@@ -26,15 +29,17 @@ export async function GET(request: Request) {
         .from('trades')
         .select('*', { count: 'exact', head: true });
 
-    return NextResponse.json({
+    if (usersError || walletsError || tradesError) {
+      throwHttp("internal_error", "Failed to fetch debug database data", 500);
+    }
+
+    return {
+      data: {
         users,
         wallets,
         tradesCount,
         tradesSample: trades,
-        errors: { usersError, walletsError, tradesError }
-    });
-
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+      },
+    };
+  });
 }

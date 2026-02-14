@@ -2,6 +2,7 @@
 
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { usePrivy } from "@privy-io/react-auth";
 import Sidebar from "@/components/Sidebar";
 import { HoldingsPage } from "@/components/HoldingsPage";
 import { Dashboard } from "@/components/Dashboard";
@@ -19,6 +20,7 @@ import { WalletFilterProvider, useWalletFilter } from "@/app/contexts/WalletFilt
 import { WalletSelector } from "@/components/WalletSelector";
 import { cachedFetch } from "@/lib/cachedFetch";
 import { useAppSettings } from "@/lib/hooks/useAppSettings";
+import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
 
 function DashboardContent({
   dbUser,
@@ -52,12 +54,15 @@ function DashboardContent({
   const [hasResolvedHoldings, setHasResolvedHoldings] = useState(false);
   const [activeItem, setActiveItem] = useState(initialActiveItem);
   const [pendingJournalTxHash, setPendingJournalTxHash] = useState<string | null>(null);
+  const [hasInitializedDashboard, setHasInitializedDashboard] = useState(false);
   const resolvedWalletAddress = selectedWallet?.wallet_address ?? (publicKey ? publicKey.toBase58() : null);
   const isDashboardDataReady = !isLoading && !walletFilterLoading && hasResolvedHoldings;
   const walletScope = selectedWalletId ?? "all";
   const { settings } = useAppSettings(dbUser?.id);
   const autoSyncDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSyncLastRunRef = useRef<Map<string, number>>(new Map());
+  const { ready, authenticated, getAccessToken } = usePrivy();
+  const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
 
   const applyHoldingsPayload = useCallback((data: any) => {
     const sourceHoldings =
@@ -165,6 +170,16 @@ function DashboardContent({
     setWatchlist(dashboardData?.watchlist || []);
     setTrades(dashboardData?.trades || []);
     setWallets(dashboardData?.wallets || []);
+    if (Array.isArray(dashboardData?.holdings)) {
+      const nextHoldings = dashboardData.holdings as Holding[];
+      setHoldings(nextHoldings);
+      const solFromAggregate =
+        nextHoldings.find(
+          (h: any) => h?.symbol === "SOL" || h?.mint === "So11111111111111111111111111111111111111112"
+        )?.amount || 0;
+      setSolBalance(Number(solFromAggregate || 0));
+      setHasResolvedHoldings(true);
+    }
   }, []);
 
   const applyJournalPayload = useCallback((journalData: any) => {
@@ -192,6 +207,10 @@ function DashboardContent({
 
   useEffect(() => {
     const fetchData = async () => {
+      if (!ready || !authenticated) {
+        setIsLoading(false);
+        return;
+      }
       if (!connected || !publicKey || !dbUser) {
         setIsLoading(false);
         return;
@@ -200,39 +219,37 @@ function DashboardContent({
         return;
       }
 
-      setIsLoading(true);
+      if (!hasInitializedDashboard) {
+        setIsLoading(true);
+      }
       try {
-        let dashboardUrl = `/api/dashboard-data?user_id=${dbUser.id}`;
-        let journalUrl = `/api/journal-activity?userId=${dbUser.id}`;
+        let dashboardUrl = `/api/dashboard-data`;
+        let journalUrl = `/api/journal-activity`;
 
         if (selectedWalletId !== null) {
-          dashboardUrl += `&walletId=${selectedWalletId}`;
-          journalUrl += `&walletId=${selectedWalletId}`;
+          dashboardUrl += `?walletId=${selectedWalletId}`;
+          journalUrl += `?walletId=${selectedWalletId}`;
         } else if ((filterWallets?.length || 0) === 0) {
           // If wallets haven't been created in DB yet, bootstrap with connected wallet.
-          dashboardUrl += `&walletAddress=${publicKey.toBase58()}`;
+          dashboardUrl += `?walletAddress=${publicKey.toBase58()}`;
         }
 
         const [dashboardData, journalData] = await Promise.all([
           cachedFetch({
+            revalidateOnHit: false,
             key: `dashboard:${dbUser.id}:${walletScope}`,
             fetcher: async () => {
-              const res = await fetch(dashboardUrl);
-              if (!res.ok) {
-                throw new Error("Failed to fetch dashboard data");
-              }
-              return res.json();
+              const res = await authedFetchClient(getBearerToken, dashboardUrl);
+              return parseApiResponse(res);
             },
             onUpdate: applyDashboardPayload,
           }),
           cachedFetch({
+            revalidateOnHit: false,
             key: `journal-activity:${dbUser.id}:${walletScope}`,
             fetcher: async () => {
-              const res = await fetch(journalUrl);
-              if (!res.ok) {
-                throw new Error("Failed to fetch journal activity data");
-              }
-              return res.json();
+              const res = await authedFetchClient(getBearerToken, journalUrl);
+              return parseApiResponse(res);
             },
             onUpdate: applyJournalPayload,
           }),
@@ -244,11 +261,16 @@ function DashboardContent({
         console.error("Initialization error:", error);
       } finally {
         setIsLoading(false);
+        if (!hasInitializedDashboard) {
+          setHasInitializedDashboard(true);
+        }
       }
     };
 
     fetchData();
   }, [
+    ready,
+    authenticated,
     connected,
     publicKey,
     dbUser,
@@ -259,6 +281,8 @@ function DashboardContent({
     filterWallets?.length,
     applyDashboardPayload,
     applyJournalPayload,
+    getBearerToken,
+    hasInitializedDashboard,
   ]);
 
 
@@ -271,14 +295,11 @@ function DashboardContent({
       const shouldFetchAllWallets = selectedWalletId === null && (filterWallets?.length || 0) > 0;
       if (shouldFetchAllWallets) {
         const aggregatePayload = await cachedFetch<any>({
+          force: true,
           key: `holdings:${dbUser.id}:${walletScope}`,
           fetcher: async () => {
-            const response = await fetch(`/api/dashboard-data?user_id=${dbUser.id}`);
-            const data = await response.json();
-            if (!response.ok) {
-              throw new Error(data?.error || "Failed to refresh all-wallet holdings");
-            }
-            return data;
+            const response = await authedFetchClient(getBearerToken, `/api/dashboard-data`);
+            return parseApiResponse(response);
           },
           onUpdate: applyAggregateHoldings,
         });
@@ -291,16 +312,14 @@ function DashboardContent({
       }
 
       const walletPayload = await cachedFetch<any>({
+        force: true,
         key: `holdings:${dbUser.id}:${walletScope}:${resolvedWalletAddress}`,
         fetcher: async () => {
-          const response = await fetch(
+          const response = await authedFetchClient(
+            getBearerToken,
             `/api/holdings?walletAddress=${resolvedWalletAddress}`
           );
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data?.error || "Failed to refresh holdings");
-          }
-          return data;
+          return parseApiResponse(response);
         },
         onUpdate: applyHoldingsPayload,
       });
@@ -318,37 +337,13 @@ function DashboardContent({
     resolvedWalletAddress,
     applyAggregateHoldings,
     applyHoldingsPayload,
+    getBearerToken,
   ]);
 
   useEffect(() => {
-    if (!settings.preloadDataInBackground) {
+    if (!ready || !authenticated) {
       return;
     }
-    if (!dbUser?.id || walletFilterLoading) {
-      return;
-    }
-
-    if (!resolvedWalletAddress) {
-      setHasResolvedHoldings(true);
-      return;
-    }
-
-    setHasResolvedHoldings(false);
-    handleRefreshHoldings().catch((error) => {
-      console.error("Auto-refresh holdings failed:", error);
-      setHasResolvedHoldings(true);
-    });
-  }, [
-    dbUser?.id,
-    selectedWalletId,
-    selectedWallet?.wallet_address,
-    publicKey,
-    walletFilterLoading,
-    resolvedWalletAddress,
-    handleRefreshHoldings,
-  ]);
-
-  useEffect(() => {
     if (!dbUser?.id || walletFilterLoading) {
       return;
     }
@@ -362,80 +357,70 @@ function DashboardContent({
 
     const dashboardUrl =
       selectedWalletId === null
-        ? `/api/dashboard-data?user_id=${userId}`
-        : `/api/dashboard-data?user_id=${userId}&walletId=${selectedWalletId}`;
+        ? `/api/dashboard-data`
+        : `/api/dashboard-data?walletId=${selectedWalletId}`;
 
     const journalActivityUrl =
       selectedWalletId === null
-        ? `/api/journal-activity?userId=${userId}`
-        : `/api/journal-activity?userId=${userId}&walletId=${selectedWalletId}`;
+        ? `/api/journal-activity`
+        : `/api/journal-activity?walletId=${selectedWalletId}`;
 
     const journalEntriesUrl =
       selectedWalletId === null
-        ? `/api/journal/entries?userId=${userId}`
-        : `/api/journal/entries?userId=${userId}&walletId=${selectedWalletId}`;
+        ? `/api/journal/entries`
+        : `/api/journal/entries?walletId=${selectedWalletId}`;
 
     const tradesUrl =
       selectedWalletId === null
-        ? `/api/trades?userId=${userId}`
-        : `/api/trades?userId=${userId}&walletId=${selectedWalletId}`;
+        ? `/api/trades`
+        : `/api/trades?walletId=${selectedWalletId}`;
 
     const fetchJournalActivity = async () => {
-      const res = await fetch(journalActivityUrl);
-      if (!res.ok) {
-        throw new Error("Failed to prefetch journal activity");
-      }
-      return res.json();
+      const res = await authedFetchClient(getBearerToken, journalActivityUrl);
+      return parseApiResponse(res);
     };
 
     const fetchJournalEntries = async () => {
-      const res = await fetch(journalEntriesUrl);
-      if (!res.ok) {
-        throw new Error("Failed to prefetch journal entries");
-      }
-      return res.json();
+      const res = await authedFetchClient(getBearerToken, journalEntriesUrl);
+      return parseApiResponse(res);
     };
 
     const tasks: Promise<unknown>[] = [
       cachedFetch({
+        revalidateOnHit: false,
         key: `dashboard:${userId}:${walletKey}`,
         fetcher: async () => {
-          const res = await fetch(dashboardUrl);
-          if (!res.ok) {
-            throw new Error("Failed to prefetch dashboard data");
-          }
-          return res.json();
+          const res = await authedFetchClient(getBearerToken, dashboardUrl);
+          return parseApiResponse(res);
         },
       }),
       cachedFetch({
+        revalidateOnHit: false,
         key: `trades-list:${userId}:${walletKey}`,
         fetcher: async () => {
-          const res = await fetch(tradesUrl);
-          if (!res.ok) {
-            throw new Error("Failed to prefetch trades data");
-          }
-          return res.json();
+          const res = await authedFetchClient(getBearerToken, tradesUrl);
+          return parseApiResponse(res);
         },
       }),
       cachedFetch({
+        revalidateOnHit: false,
         key: `journal-activity:${userId}:${walletKey}`,
         fetcher: fetchJournalActivity,
       }),
       cachedFetch({
+        revalidateOnHit: false,
         key: `journal-entries:${userId}:${walletKey}`,
         fetcher: fetchJournalEntries,
       }),
       cachedFetch({
+        revalidateOnHit: false,
         key: `trades:${userId}:${walletKey}`,
         fetcher: async () => {
           const [tradesRes, entriesRes] = await Promise.all([
-            fetch(tradesUrl),
+            authedFetchClient(getBearerToken, tradesUrl),
             fetchJournalEntries(),
           ]);
-          if (!tradesRes.ok) {
-            throw new Error("Failed to prefetch trades data");
-          }
-          const tradesData = await tradesRes.json();
+          const tradesData = await parseApiResponse(tradesRes);
           return {
             trades: tradesData || [],
             entries: Array.isArray(entriesRes) ? entriesRes : [],
@@ -443,6 +428,7 @@ function DashboardContent({
         },
       }),
       cachedFetch({
+        revalidateOnHit: false,
         key: `journal:${userId}:${walletKey}`,
         fetcher: async () => {
           const [activityData, entriesData] = await Promise.all([
@@ -484,26 +470,22 @@ function DashboardContent({
     if (selectedWalletId === null && (filterWallets?.length || 0) > 0) {
       tasks.push(
         cachedFetch({
+          revalidateOnHit: false,
           key: `holdings:${userId}:${walletKey}`,
           fetcher: async () => {
-            const res = await fetch(`/api/dashboard-data?user_id=${userId}`);
-            if (!res.ok) {
-              throw new Error("Failed to prefetch aggregate holdings");
-            }
-            return res.json();
+            const res = await authedFetchClient(getBearerToken, `/api/dashboard-data`);
+            return parseApiResponse(res);
           },
         })
       );
     } else if (resolvedWalletAddress) {
       tasks.push(
         cachedFetch({
+          revalidateOnHit: false,
           key: `holdings:${userId}:${walletKey}:${resolvedWalletAddress}`,
           fetcher: async () => {
-            const res = await fetch(`/api/holdings?walletAddress=${resolvedWalletAddress}`);
-            if (!res.ok) {
-              throw new Error("Failed to prefetch holdings data");
-            }
-            return res.json();
+            const res = await authedFetchClient(getBearerToken, `/api/holdings?walletAddress=${resolvedWalletAddress}`);
+            return parseApiResponse(res);
           },
         })
       );
@@ -512,6 +494,8 @@ function DashboardContent({
     void Promise.allSettled(tasks);
   }, [
     settings.preloadDataInBackground,
+    ready,
+    authenticated,
     dbUser?.id,
     selectedWalletId,
     selectedWallet?.wallet_address,
@@ -519,9 +503,13 @@ function DashboardContent({
     walletFilterLoading,
     filterWallets?.length,
     resolvedWalletAddress,
+    getBearerToken,
   ]);
 
   useEffect(() => {
+    if (!ready || !authenticated) {
+      return;
+    }
     if (!settings.autoSyncOnLogin) {
       return;
     }
@@ -557,18 +545,14 @@ function DashboardContent({
         setSyncStatus(true, scope);
         try {
           for (const wallet of targets) {
-            const response = await fetch("/api/journal/sync", {
+            const response = await authedFetchClient(getBearerToken, "/api/journal/sync", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                userId: dbUser.id,
                 walletAddress: wallet.wallet_address,
               }),
             });
-            const data = await response.json().catch(() => ({}));
-            if (!response.ok) {
-              throw new Error(data?.error || "Auto-sync failed");
-            }
+            const data = await parseApiResponse<any>(response);
 
             const nextTimestamp = data?.last_synced_at || new Date().toISOString();
             const key = `tradelog:lastSyncedAt:${wallet.id}`;
@@ -596,12 +580,15 @@ function DashboardContent({
     };
   }, [
     settings.autoSyncOnLogin,
+    ready,
+    authenticated,
     dbUser?.id,
     walletFilterLoading,
     selectedWalletId,
     selectedWallet,
     filterWallets,
     setSyncStatus,
+    getBearerToken,
   ]);
 
   const renderMainContent = () => {
@@ -662,7 +649,7 @@ function DashboardContent({
               holdings={holdings} 
               onNavigateToHoldings={() => setActiveItem("Holdings")} 
               onNavigateToJournal={() => setActiveItem("Journal")}
-              isLoading={!isDashboardDataReady || isRefreshing} 
+              isLoading={!isDashboardDataReady} 
             />
           </div>
         );
@@ -683,6 +670,8 @@ export function DashboardClient({
   initialActiveItem = "Dashboard",
 }: any) {
   const { publicKey, connected } = useWallet();
+  const { getAccessToken } = usePrivy();
+  const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
   const [dbUser, setDbUser] = useState<User | null>(null);
   const [isUserLoading, setIsUserLoading] = useState(true);
 
@@ -696,15 +685,11 @@ export function DashboardClient({
 
       setIsUserLoading(true);
       try {
-        const response = await fetch('/api/users', {
+        const response = await authedFetchClient(getBearerToken, '/api/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ wallet_address: publicKey.toBase58() }),
         });
-        if (!response.ok) {
-          throw new Error("Failed to get or create user.");
-        }
-        const user = await response.json();
+        const user = await parseApiResponse<User>(response);
         setDbUser(user);
       } catch (error) {
         console.error("Initialization error:", error);
@@ -714,7 +699,7 @@ export function DashboardClient({
     };
 
     fetchUser();
-  }, [connected, publicKey]);
+  }, [connected, publicKey, getBearerToken]);
 
   if (!connected || !publicKey) {
     return <WalletConnection />;

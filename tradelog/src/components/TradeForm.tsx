@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { usePrivy } from "@privy-io/react-auth";
 import { supabase } from "@/app/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,9 +15,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Setup } from "@/lib/types";
+import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
 
 export default function TradeForm() {
   const { publicKey } = useWallet();
+  const { getAccessToken } = usePrivy();
+  const getBearerToken = async () => (await getAccessToken?.()) || null;
   const [tokenAddress, setTokenAddress] = useState("");
   const [tradeType, setTradeType] = useState<"buy" | "sell">("buy");
   const [amount, setAmount] = useState("");
@@ -70,7 +74,7 @@ export default function TradeForm() {
     };
 
     try {
-      const response = await fetch('/api/trades', {
+      const response = await authedFetchClient(getBearerToken, '/api/trades', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -78,11 +82,7 @@ export default function TradeForm() {
         body: JSON.stringify(tradeData),
       });
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "An unknown error occurred");
-      }
+      await parseApiResponse(response);
       
       setMessage("Trade logged successfully!");
       // Reset form

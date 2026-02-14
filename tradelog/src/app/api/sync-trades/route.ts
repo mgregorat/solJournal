@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { Trade } from '@/lib/types';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +58,6 @@ async function getSolPrice(date: string): Promise<number> {
       return 0;
     }
     const data = await response.json();
-    console.log(`CoinGecko response for ${date}:`, JSON.stringify(data, null, 2));
     const price = data?.market_data?.current_price?.usd;
     if (price) {
       solPriceCache.set(date, price);
@@ -74,13 +74,10 @@ const SOL_MINT_ADDRESS = 'So11111111111111111111111111111111111111112';
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 
 export async function POST(req: NextRequest) {
-  try {
+  return withTiming(req, async () => {
     const { walletAddress } = await req.json();
     if (!walletAddress) {
-      return NextResponse.json(
-        { error: "Wallet address is required" },
-        { status: 400 }
-      );
+      throwHttp("bad_request", "Wallet address is required", 400);
     }
 
     const tokenMap = await getTokenMap();
@@ -89,7 +86,7 @@ export async function POST(req: NextRequest) {
     const enhancedTransactions = await getEnhancedTransactions(walletAddress, tokenMap);
 
     if (!enhancedTransactions || enhancedTransactions.length === 0) {
-        return NextResponse.json({ trades: [], message: "No new trades to sync." });
+        return { trades: [], message: "No new trades to sync." };
     }
 
     const tradesForDb = enhancedTransactions.map(trade => {
@@ -139,7 +136,7 @@ export async function POST(req: NextRequest) {
     }).filter(Boolean) as Partial<Trade>[];
 
     if (tradesForDb.length === 0) {
-        return NextResponse.json({ message: "No new valid trades to sync." });
+        return { message: "No new valid trades to sync." };
     }
 
     // Fetch historical prices for all trades at once
@@ -181,19 +178,11 @@ export async function POST(req: NextRequest) {
         .select();
 
     if (error) {
-        console.error("Database insertion error:", error);
-        return NextResponse.json({ error: "An error occurred while saving trades." }, { status: 500 });
+        throwHttp("internal_error", "An error occurred while saving trades.", 500);
     }
 
-    return NextResponse.json({ trades: data, message: "Trades synced successfully!" });
-
-  } catch (e: any) {
-    console.error(e);
-    return NextResponse.json(
-      { error: "An unexpected error occurred." },
-      { status: 500 }
-    );
-  }
+    return { trades: data, message: "Trades synced successfully!" };
+  });
 }
 
 // Helius Enhanced Transactions API - Get transactions for a specific address
@@ -242,7 +231,6 @@ async function getEnhancedTransactions(address: string, tokenMap: Map<string, { 
         // If the number of new transactions is less than the number fetched,
         // it means we found some old ones, so we can stop.
         if (newTransactionsInBatch.length < transactions.length) {
-            console.log("Found existing trades, stopping sync to prevent duplicates.");
             break;
         }
 

@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { Holding } from '@/lib/types';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export async function POST(req: NextRequest) {
-    try {
+    return withTiming(req, async () => {
         const { walletAddress } = await req.json();
 
         if (!walletAddress) {
-            return NextResponse.json({ error: 'Wallet address is required' }, { status: 400 });
+            throwHttp("bad_request", "Wallet address is required", 400);
         }
 
         const { fetchHoldings, fetchSOLBalance } = await import('@/lib/puppeteer-fetch');
@@ -63,9 +64,6 @@ export async function POST(req: NextRequest) {
             enrichedHoldings.unshift(solHolding);
         }
 
-        return NextResponse.json({ holdings: enrichedHoldings });
-    } catch (error: any) {
-        console.error('Error refreshing holdings:', error);
-        return NextResponse.json({ error: 'Failed to refresh holdings' }, { status: 500 });
-    }
+        return { holdings: enrichedHoldings };
+    });
 }

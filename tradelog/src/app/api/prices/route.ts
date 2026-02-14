@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { throwHttp, withTiming } from "@/app/lib/http";
 
 const JUPITER_API_URL = "https://price.jup.ag/v4/price";
 const BATCH_SIZE = 50; // Number of mints per batch request
@@ -9,64 +10,58 @@ const isValidMint = (mint: string): boolean => {
 }
 
 async function fetchPricesInBatch(mints: string[], retries = 3, delay = 1000) {
-    if (mints.length === 0) return {};
-    const url = `${JUPITER_API_URL}?ids=${mints.join(',')}`;
+  if (mints.length === 0) return {};
+  const url = `${JUPITER_API_URL}?ids=${mints.join(',')}`;
 
-    for (let i = 0; i < retries; i++) {
-        try {
-            const response = await fetch(url);
-            if (response.ok) {
-                const data = await response.json();
-                return data.data; // Success
-            }
-            // If response is not OK, log and treat as a failure for this batch
-            console.error(`Jupiter API batch request failed for URL: ${url}. Status: ${response.status} ${response.statusText}`);
-            return {};
-        } catch (error: any) {
-            console.error(`Attempt ${i + 1} failed for fetching batch: ${error.message}.`);
-            if (i < retries - 1) {
-                await new Promise(res => setTimeout(res, delay));
-            } else {
-                console.error(`All ${retries} retries failed for batch starting with ${mints[0]}.`);
-                return {}; // Return empty after all retries fail
-            }
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (response.ok) {
+        const data = await response.json();
+        return data.data; // Success
+      }
+      if (response.status === 429) {
+        throwHttp("rate_limited", "Rate limited", 429);
+      }
+      if (response.status === 400) {
+        throwHttp("bad_request", "Invalid token mint addresses", 400);
+      }
+      throwHttp("provider_unavailable", "Price provider unavailable", 502);
+    } catch (error: any) {
+      if (i < retries - 1) {
+        await new Promise(res => setTimeout(res, delay));
+      } else {
+        if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+          throwHttp("provider_timeout", "Price provider timeout", 504);
         }
+        throwHttp("provider_unavailable", "Price provider unavailable", 502);
+      }
     }
-    return {};
+  }
+  throwHttp("provider_unavailable", "Price provider unavailable", 502);
 }
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const ids = searchParams.get("ids");
+  return withTiming(req, async () => {
+    const { searchParams } = new URL(req.url);
+    const ids = searchParams.get("ids");
+    if (!ids) {
+      throwHttp("bad_request", "Token mint addresses are required", 400);
+    }
 
-  if (!ids) {
-    return NextResponse.json(
-      { error: "Token mint addresses are required" },
-      { status: 400 }
-    );
-  }
-  
-  const allMints = ids.split(',');
-  const validMints = allMints.filter(isValidMint);
-  
-  const batches: string[][] = [];
-  for (let i = 0; i < validMints.length; i += BATCH_SIZE) {
+    const allMints = ids.split(',');
+    const validMints = allMints.filter(isValidMint);
+    if (validMints.length === 0) {
+      throwHttp("bad_request", "No valid token mint addresses provided", 400);
+    }
+
+    const batches: string[][] = [];
+    for (let i = 0; i < validMints.length; i += BATCH_SIZE) {
       batches.push(validMints.slice(i, i + BATCH_SIZE));
-  }
-
-  try {
+    }
     const batchPromises = batches.map(batch => fetchPricesInBatch(batch));
     const results = await Promise.all(batchPromises);
-
     const combinedData = results.reduce((acc, current) => ({ ...acc, ...current }), {});
-
-    return NextResponse.json({ data: combinedData });
-    
-  } catch (error: any) {
-    console.error("Error fetching from Jupiter API in batches:", error);
-    return NextResponse.json(
-      { error: "An unexpected error occurred while fetching prices." },
-      { status: 500 }
-    );
-  }
+    return { prices: combinedData };
+  });
 } 

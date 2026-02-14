@@ -1,34 +1,29 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
-    const { searchParams } = new URL(request.url);
-    const userIdStr = searchParams.get('userId');
-    const walletAddress = searchParams.get('walletAddress');
-
-    if (!userIdStr || !walletAddress) {
-        return NextResponse.json({ error: 'userId and walletAddress are required' }, { status: 400 });
-    }
-
-    const userId = parseInt(userIdStr, 10);
-    if (isNaN(userId)) {
-        return NextResponse.json({ error: 'Invalid userId format' }, { status: 400 });
-    }
-
-    try {
-        console.log(`[API /journaled-trades] Fetching journaled trades for userId: ${userId}, wallet: ${walletAddress}`);
-
-        // Fetch trades and journal entries separately, then merge
-        console.log(`[API /journaled-trades] About to query journal_entries with userId: ${userId}`);
+export async function GET(request: NextRequest) {
+    return withTiming(request, async () => {
+        const { searchParams } = new URL(request.url);
+        const walletAddress = searchParams.get('walletAddress');
+        const walletIdStr = searchParams.get('walletId');
+        const dbUser = await requireUser(request);
+        const parsedWalletId = walletIdStr ? parseInt(walletIdStr, 10) : null;
+        if (walletIdStr && isNaN(parsedWalletId as number)) {
+            throwHttp("bad_request", "Invalid walletId format", 400);
+        }
+        const ownedWallet = await requireOwnedWallet(request, dbUser, parsedWalletId, walletAddress);
+        const ownedWalletId = ownedWallet.id;
         
         const [{ data: trades, error: tradesError }, { data: allJournalEntries, error: journalError }] = await Promise.all([
             supabaseAdmin
                 .from('synced_trades')
                 .select('*')
-                .eq('user_id', userId)
-                .eq('wallet_address', walletAddress)
+                .eq('user_id', dbUser.id)
+                .eq('wallet_id', ownedWalletId)
                 .order('trade_date', { ascending: false }),
             supabaseAdmin
                 .from('journal_entries')
@@ -37,29 +32,13 @@ export async function GET(request: Request) {
         ]);
         
         // Filter journal entries client-side since the server-side filter isn't working
-        const journalEntries = allJournalEntries?.filter(entry => entry.user_id === userId) || [];
-        
-        console.log(`[API /journaled-trades] Journal query completed. Error:`, journalError);
-        console.log(`[API /journaled-trades] All journal entries:`, allJournalEntries?.length || 0);
-        console.log(`[API /journaled-trades] Filtered journal entries:`, journalEntries.length);
+        const journalEntries = allJournalEntries?.filter(entry => entry.user_id === dbUser.id && entry.wallet_id === ownedWalletId) || [];
 
         if (tradesError) {
-            console.error('[API /journaled-trades] Trades error:', tradesError);
-            throw tradesError;
+            throwHttp("internal_error", "Failed to fetch journaled trades", 500);
         }
         if (journalError) {
-            console.error('[API /journaled-trades] Journal error:', journalError);
-            throw journalError;
-        }
-
-        console.log(`[API /journaled-trades] Fetched ${trades?.length || 0} trades and ${journalEntries?.length || 0} journal entries`);
-
-        // Log some sample data for debugging
-        if (trades && trades.length > 0) {
-            console.log(`[API /journaled-trades] Sample trade tx_hash:`, trades[0].tx_hash);
-        }
-        if (journalEntries && journalEntries.length > 0) {
-            console.log(`[API /journaled-trades] Sample journal tx_hash:`, journalEntries[0].tx_hash);
+            throwHttp("internal_error", "Failed to fetch journaled trades", 500);
         }
 
         // Create journal map for fast lookup
@@ -68,16 +47,9 @@ export async function GET(request: Request) {
             return acc;
         }, {} as Record<string, any>) || {};
 
-        console.log(`[API /journaled-trades] Journal Map has ${Object.keys(journalMap).length} entries`);
-        console.log(`[API /journaled-trades] Journal Map keys:`, Object.keys(journalMap));
-
         // Filter trades that have journal entries and transform them
         const journaledTrades = trades?.filter(trade => {
-            const hasJournal = !!journalMap[trade.tx_hash as string];
-            if (hasJournal) {
-                console.log(`[API /journaled-trades] Found journaled trade:`, trade.tx_hash);
-            }
-            return hasJournal;
+            return !!journalMap[trade.tx_hash as string];
         })
             .map(trade => {
                 const journalEntry = journalMap[trade.tx_hash as string];
@@ -106,12 +78,6 @@ export async function GET(request: Request) {
                 };
                          }) || [];
 
-        console.log(`[API /journaled-trades] Returning ${journaledTrades.length} journaled trades`);
-        
-        return NextResponse.json(journaledTrades);
-
-    } catch (error: any) {
-        console.error(`[API /journaled-trades] Error:`, error.message);
-        return NextResponse.json({ error: 'Failed to fetch journaled trades', details: error.message }, { status: 500 });
-    }
+        return journaledTrades;
+    });
 } 

@@ -26,6 +26,7 @@ import toast from 'react-hot-toast';
 import { JournalEntryModal } from '@/components/JournalEntryModal';
 import { cachedFetch } from '@/lib/cachedFetch';
 import { invalidateCache } from '@/lib/cache';
+import { authedFetchClient, parseApiResponse } from '@/lib/authedFetch';
 
 const isCuratedTrade = (trade: Partial<JournalEvent>) => !!trade.is_journaled || !!trade.is_flagged;
 const isJournalCompleted = (trade: Partial<JournalEvent>) => !!trade.is_journaled;
@@ -431,7 +432,8 @@ export const JournalPage = ({
   const [journalEvents, setJournalEvents] = useState<JournalEvent[]>(Array.isArray(initialJournalEvents) ? initialJournalEvents : []);
   const [allTradeEvents, setAllTradeEvents] = useState<JournalEvent[]>(Array.isArray(initialJournalEvents) ? initialJournalEvents : []);
   const [dbUser, setDbUser] = useState<User | undefined>(propDbUser);
-  const { user: privyUser, authenticated } = usePrivy();
+  const { user: privyUser, authenticated, getAccessToken } = usePrivy();
+  const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
   const { publicKey } = useWallet();
   const router = useRouter();
   const pathname = usePathname();
@@ -553,29 +555,24 @@ export const JournalPage = ({
       const mergedEvents = await cachedFetch<JournalEvent[]>({
         key: `journal:${userId}:${walletScope}`,
         fetcher: async () => {
-          let activityUrl = `/api/journal-activity?userId=${userId}`;
+          let activityUrl = `/api/journal-activity`;
           if (selectedWalletId !== null) {
-            activityUrl += `&walletId=${selectedWalletId}`;
+            activityUrl += `?walletId=${selectedWalletId}`;
           }
-          let entriesUrl = `/api/journal/entries?userId=${userId}`;
+          let entriesUrl = `/api/journal/entries`;
           if (selectedWalletId !== null) {
-            entriesUrl += `&walletId=${selectedWalletId}`;
+            entriesUrl += `?walletId=${selectedWalletId}`;
           }
 
           const [activityResponse, entriesResponse] = await Promise.all([
-            fetch(activityUrl),
-            fetch(entriesUrl)
+            authedFetchClient(getBearerToken, activityUrl),
+            authedFetchClient(getBearerToken, entriesUrl)
           ]);
 
-          if (!activityResponse.ok) {
-            const err = await activityResponse.text();
-            throw new Error(`Failed to fetch journal activity: ${err}`);
-          }
-
-          const tradeEvents: JournalEvent[] = await activityResponse.json();
+          const tradeEvents = await parseApiResponse<JournalEvent[]>(activityResponse);
           let journalEntries: any[] = [];
           if (entriesResponse.ok) {
-            journalEntries = await entriesResponse.json();
+            journalEntries = await parseApiResponse<any[]>(entriesResponse);
           } else {
             const err = await entriesResponse.text();
             console.warn('Journal entries unavailable, continuing without entries:', err);
@@ -616,7 +613,7 @@ export const JournalPage = ({
     } finally {
       setIsRefreshingData(false);
     }
-  }, [dbUser, publicKey, selectedWalletId, applyMergedEvents]);
+  }, [dbUser, publicKey, selectedWalletId, applyMergedEvents, getBearerToken]);
 
   useEffect(() => {
     if (dbUser) { // Run only when dbUser is available
@@ -629,17 +626,18 @@ export const JournalPage = ({
     setIsSyncing(true);
     const toastId = toast.loading("Syncing trades from GMGN...");
     try {
-        const response = await fetch('/api/journal/sync', {
+        const response = await authedFetchClient(getBearerToken, '/api/journal/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: dbUser.id, walletAddress: selectedWallet?.wallet_address || publicKey.toBase58(), force: true }),
+            body: JSON.stringify({ walletAddress: selectedWallet?.wallet_address || publicKey.toBase58(), force: true }),
         });
-        const data = await response.json();
         if (response.ok) {
+            const data = await parseApiResponse<any>(response);
             toast.success(`Sync complete. Found ${data.synced} trades.`, { id: toastId });
             invalidateCache(`journal:${dbUser.id}:`);
             fetchAndMergeData();
         } else {
+            const data = await response.json().catch(() => ({}));
             console.error("Sync failed:", data);
             toast.error(`Sync failed: ${data.error || 'Unknown error'}`, { id: toastId });
         }
@@ -777,9 +775,8 @@ export const JournalPage = ({
       }));
     setViewingEvent(updatedEventWithTimestamp);
 
-    const journalData = {
+      const journalData = {
       tx_hash: updatedEvent.transaction_hash,
-      userId: dbUser?.id,
       walletId: updatedEvent.wallet_id,
       notes: updatedEvent.notes,
       tags: updatedEvent.tags,
@@ -789,7 +786,7 @@ export const JournalPage = ({
     };
 
     try {
-      const response = await fetch('/api/journal/flag', {
+      const response = await authedFetchClient(getBearerToken, '/api/journal/flag', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(journalData),
@@ -801,8 +798,8 @@ export const JournalPage = ({
         // Revert on failure
         setJournalEvents(prev => prev.map(e => e.id === updatedEvent.id ? updatedEvent : e));
       } else {
-        const savedData = await response.json();
-        const newJournalEntry = Array.isArray(savedData.data) ? savedData.data[0] : savedData.data;
+        const savedData = await parseApiResponse<any>(response);
+        const newJournalEntry = Array.isArray(savedData) ? savedData[0] : savedData;
         if (!newJournalEntry) {
           console.error('Save reflection returned no data:', savedData);
           return;
@@ -892,10 +889,10 @@ export const JournalPage = ({
     if (!viewingEvent) return;
 
     try {
-      const response = await fetch('/api/journal', {
+      const response = await authedFetchClient(getBearerToken, '/api/journal', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tx_hash: viewingEvent.id, userId: dbUser?.id }),
+        body: JSON.stringify({ tx_hash: viewingEvent.id }),
       });
 
       if (!response.ok) {
@@ -936,13 +933,12 @@ export const JournalPage = ({
     setJournalEvents(prev => prev.map(e => e.id === trade.id ? { ...e, is_flagged: newFlaggedState } : e));
     
     try {
-      await fetch('/api/journal/flag', {
+      await authedFetchClient(getBearerToken, '/api/journal/flag', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           tx_hash: trade.transaction_hash, 
           is_flagged: newFlaggedState, 
-          userId: dbUser?.id,
           walletId: trade.wallet_id,
         }),
       });

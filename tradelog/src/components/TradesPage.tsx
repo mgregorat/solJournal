@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePrivy } from "@privy-io/react-auth";
 import { User } from "@/lib/types";
 import { useWalletFilter } from "@/app/contexts/WalletFilterContext";
 import { shortenAddress } from "@/lib/utils";
@@ -18,6 +19,7 @@ import {
 import { WalletSelector } from "@/components/WalletSelector";
 import { cachedFetch } from "@/lib/cachedFetch";
 import { invalidateCache } from "@/lib/cache";
+import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
 
 type TradeRow = {
   id: number;
@@ -50,6 +52,8 @@ export const TradesPage = ({
 }: {
   dbUser: User;
 }) => {
+  const { getAccessToken } = usePrivy();
+  const getBearerToken = async () => (await getAccessToken?.()) || null;
   const { selectedWalletId, selectedWallet, wallets, refreshWallets } = useWalletFilter();
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [journaledTxHashes, setJournaledTxHashes] = useState<Set<string>>(new Set());
@@ -91,26 +95,23 @@ export const TradesPage = ({
       const payload = await cachedFetch<{ trades: TradeRow[]; entries: JournalEntryRow[] }>({
         key: `trades:${dbUser.id}:${walletScope}`,
         fetcher: async () => {
-          let tradesUrl = `/api/trades?userId=${dbUser.id}`;
-          let entriesUrl = `/api/journal/entries?userId=${dbUser.id}`;
+          let tradesUrl = `/api/trades`;
+          let entriesUrl = `/api/journal/entries`;
           if (selectedWalletId !== null) {
-            tradesUrl += `&walletId=${selectedWalletId}`;
-            entriesUrl += `&walletId=${selectedWalletId}`;
+            tradesUrl += `?walletId=${selectedWalletId}`;
+            entriesUrl += `?walletId=${selectedWalletId}`;
           }
 
           const [tradesResponse, entriesResponse] = await Promise.all([
-            fetch(tradesUrl),
-            fetch(entriesUrl),
+            authedFetchClient(getBearerToken, tradesUrl),
+            authedFetchClient(getBearerToken, entriesUrl),
           ]);
 
-          const tradesData = await tradesResponse.json();
-          if (!tradesResponse.ok) {
-            throw new Error(tradesData.error || "Failed to fetch trades");
-          }
+          const tradesData = await parseApiResponse<TradeRow[]>(tradesResponse);
 
           let entriesData: JournalEntryRow[] = [];
           if (entriesResponse.ok) {
-            entriesData = await entriesResponse.json();
+            entriesData = await parseApiResponse<JournalEntryRow[]>(entriesResponse);
           }
 
           return {
@@ -151,18 +152,14 @@ export const TradesPage = ({
 
       await Promise.all(
         targetWallets.map(async (wallet) => {
-          const response = await fetch("/api/journal/sync", {
+          const response = await authedFetchClient(getBearerToken, "/api/journal/sync", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              userId: dbUser.id,
               walletAddress: wallet.wallet_address,
             }),
           });
-          const data = await response.json();
-          if (!response.ok) {
-            throw new Error(data?.error || "Failed to sync trades");
-          }
+          const data = await parseApiResponse(response);
           return data;
         })
       );

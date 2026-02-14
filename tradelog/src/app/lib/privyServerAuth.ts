@@ -105,8 +105,15 @@ function verifyPrivyJwt(token: string): JwtPayload {
     throw new Error("Token not active yet");
   }
 
-  const expectedIssuer = process.env.PRIVY_ACCESS_TOKEN_ISSUER || "https://auth.privy.io";
-  if (!payload.iss || payload.iss !== expectedIssuer) {
+  const configuredIssuers = (process.env.PRIVY_ACCESS_TOKEN_ISSUER || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const allowedIssuers = configuredIssuers.length
+    ? configuredIssuers
+    : ["privy.io", "https://auth.privy.io", "https://privy.io"];
+
+  if (!payload.iss || !allowedIssuers.includes(payload.iss)) {
     throw new Error("Invalid token issuer");
   }
 

@@ -1,6 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { isTradeJournaled } from '@/lib/utils'; // Make sure this is imported
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,34 +62,30 @@ interface EnrichedTrade {
     is_journaled?: boolean;
 }
 
-export async function GET(request: Request) {
-    const { searchParams } = new URL(request.url);
-    const userIdStr = searchParams.get('userId');
-    const walletIdStr = searchParams.get('walletId');
+export async function GET(request: NextRequest) {
+    return withTiming(request, async () => {
+        const { searchParams } = new URL(request.url);
+        const walletIdStr = searchParams.get('walletId');
+        const dbUser = await requireUser(request);
 
-    if (!userIdStr) {
-        return NextResponse.json({ error: 'userId is required' }, { status: 400 });
-    }
-
-    const userId = parseInt(userIdStr, 10);
-    if (isNaN(userId)) {
-        return NextResponse.json({ error: 'Invalid userId format' }, { status: 400 });
-    }
-
-    try {
-        console.log(`Fetching data for user: ${userId}, walletId: ${walletIdStr || 'All'}`);
+        let ownedWalletId: number | null = null;
+        if (walletIdStr) {
+            const walletId = parseInt(walletIdStr, 10);
+            if (isNaN(walletId)) {
+                throwHttp("bad_request", "Invalid walletId format", 400);
+            }
+            const ownedWallet = await requireOwnedWallet(request, dbUser, walletId, null);
+            ownedWalletId = ownedWallet.id;
+        }
 
         let tradesQuery = supabaseAdmin
             .from('trades')
             .select('*')
-            .eq('user_id', userId)
+            .eq('user_id', dbUser.id)
             .order('trade_date', { ascending: true });
 
-        if (walletIdStr) {
-            const walletId = parseInt(walletIdStr, 10);
-            if (!isNaN(walletId)) {
-                tradesQuery = tradesQuery.eq('wallet_id', walletId);
-            }
+        if (ownedWalletId !== null) {
+            tradesQuery = tradesQuery.eq('wallet_id', ownedWalletId);
         }
 
         const [{ data: trades, error: tradesError }, { data: allJournalEntries, error: journalError }] = await Promise.all([
@@ -99,15 +97,11 @@ export async function GET(request: Request) {
         ]);
 
         // Filter journal entries client-side since server-side eq() filtering isn't working
-        const journalEntries = (allJournalEntries?.filter(entry => entry.user_id === userId) || []) as any[];
+        const journalEntries = (allJournalEntries?.filter(entry => entry.user_id === dbUser.id) || []) as any[];
 
-        if (tradesError) throw tradesError;
-        if (journalError) throw journalError;
-
-        console.log(`[JOURNAL-ACTIVITY] Fetched ${trades?.length || 0} trades and ${allJournalEntries?.length || 0} total journal entries.`);
-        console.log(`[JOURNAL-ACTIVITY] Raw journal entries:`, allJournalEntries);
-        console.log(`[JOURNAL-ACTIVITY] After client-side filtering: ${journalEntries.length} journal entries for user ${userId}`);
-        console.log(`[JOURNAL-ACTIVITY] Filtered journal entries:`, journalEntries);
+        if (tradesError || journalError) {
+            throwHttp("internal_error", "Failed to fetch journal activity", 500);
+        }
 
         const journalMap: Record<string, any> = journalEntries.reduce((acc, entry) => {
             if (entry?.tx_hash) {
@@ -115,11 +109,6 @@ export async function GET(request: Request) {
             }
             return acc;
         }, {} as Record<string, any>);
-
-        console.log(`[JOURNAL-ACTIVITY] Journal Map created with ${Object.keys(journalMap).length} entries`);
-        if (Object.keys(journalMap).length > 0) {
-            console.log(`[JOURNAL-ACTIVITY] Journal Map keys:`, Object.keys(journalMap));
-        }
 
         const normalizedTrades: EnrichedTrade[] = (trades || []).map((t: any) => {
             const transaction_hash = t.transaction_hash as string | undefined;
@@ -163,9 +152,6 @@ export async function GET(request: Request) {
             
             return enrichedTrade;
         }) as EnrichedTrade[];
-
-        const tradesWithNotesCount = tradesWithJournalData.filter(t => t.notes).length;
-        console.log(`Total trades with notes after merge: ${tradesWithNotesCount}`);
 
         const tradesByToken = tradesWithJournalData.reduce((acc, trade) => {
             if (!acc[trade.token_address]) acc[trade.token_address] = [];
@@ -233,7 +219,6 @@ export async function GET(request: Request) {
                         is_journaled: trade.is_journaled,
                     };
 
-                    console.log(`Creating CLOSED event for ${trade.transaction_hash || 'N/A'}. Notes: ${eventToPush.notes}`);
                     journalEvents.push(eventToPush);
 
                     totalCost -= costForThisSell;
@@ -364,10 +349,6 @@ export async function GET(request: Request) {
           }
         });
 
-        return NextResponse.json(sortedEvents);
-
-    } catch (error: any) {
-        console.error(`An error occurred during P&L calculation for user ${userId}:`, error);
-        return NextResponse.json({ error: 'Failed to calculate P&L', details: error.message }, { status: 500 });
-    }
+        return sortedEvents;
+    });
 } 

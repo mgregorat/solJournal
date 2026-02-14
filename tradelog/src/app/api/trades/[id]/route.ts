@@ -1,12 +1,12 @@
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
-import { NextRequest, NextResponse } from 'next/server';
-
-// TODO: Get from auth once implemented
-const FAKE_USER_ID = "55555555-5555-5555-5555-555555555555"; 
+import { NextRequest } from 'next/server';
+import { requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-    const tradeId = params.id;
-    try {
+    return withTiming(req, async () => {
+        const tradeId = params.id;
+        const dbUser = await requireUser(req);
         const tradeData = await req.json();
 
         // Use admin client to bypass RLS for direct updates
@@ -14,44 +14,39 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
             .from('trades')
             .update(tradeData)
             .eq('id', tradeId)
+            .eq('user_id', dbUser.id)
             .select()
             .single();
 
         if (error) {
-            console.error('Error updating trade:', error);
             if (error.code === 'PGRST116') { // PostgREST error for no rows found
-                return NextResponse.json({ error: `Trade with id ${tradeId} not found.` }, { status: 404 });
+                throwHttp("not_found", `Trade with id ${tradeId} not found.`, 404);
             }
-            throw new Error(error.message);
+            throwHttp("internal_error", "Failed to update trade", 500);
         }
 
-        return NextResponse.json({ message: 'Trade updated successfully', trade: data });
-    } catch (error: any) {
-        console.error(`Caught error in PUT /api/trades/${tradeId}:`, error);
-        return NextResponse.json({ error: error.message || 'Failed to update trade' }, { status: 500 });
-    }
+        return { trade: data };
+    });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-    const tradeId = params.id;
-    try {
+    return withTiming(req, async () => {
+        const tradeId = params.id;
+        const dbUser = await requireUser(req);
         const { error, count } = await supabaseAdmin
             .from('trades')
             .delete({ count: 'exact' })
-            .eq('id', tradeId);
+            .eq('id', tradeId)
+            .eq('user_id', dbUser.id);
 
         if (error) {
-            console.error('Error deleting trade:', error);
-            throw new Error(error.message);
+            throwHttp("internal_error", "Failed to delete trade", 500);
         }
         
         if (count === 0) {
-            return NextResponse.json({ error: `Trade with id ${tradeId} not found.` }, { status: 404 });
+            throwHttp("not_found", `Trade with id ${tradeId} not found.`, 404);
         }
 
-        return NextResponse.json({ message: 'Trade deleted successfully' }, { status: 200 });
-    } catch (error: any) {
-        console.error(`Caught error in DELETE /api/trades/${tradeId}:`, error);
-        return NextResponse.json({ error: error.message || 'Failed to delete trade' }, { status: 500 });
-    }
+        return { success: true };
+    });
 } 

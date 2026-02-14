@@ -1,22 +1,18 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { connect } from 'puppeteer-real-browser';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import fs from 'fs';
 import path from 'path';
-
-import { getOrCreateWalletId } from '@/app/lib/walletUtils';
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 function getGmgnConfig() {
   const configPath = path.join(process.cwd(), 'tradelog', 'gmgn_config.json');
   if (fs.existsSync(configPath)) {
-    console.log('✅ Found gmgn_config.json. Using fresh credentials.');
     const rawData = fs.readFileSync(configPath, 'utf-8');
     const config = JSON.parse(rawData);
-    console.log('Loaded config for sync:', config); // Log the loaded config
     return config;
   }
-  // Fallback to default values if the config file doesn't exist.
-  console.warn('⚠️ gmgn_config.json not found. Using fallback default values.');
   return {
     app_ver: '20250717-1241-47bc674',
     client_id: 'gmgn_web_20250717-1241-47bc674',
@@ -25,18 +21,28 @@ function getGmgnConfig() {
   };
 }
 
-export async function POST(request: Request) {
-  try {
+export async function POST(request: NextRequest) {
+  return withTiming(request, async () => {
+    const dbUser = await requireUser(request);
     const body = await request.json();
-    console.log('Received request body:', body); // Added for detailed logging
-    const { userId, walletAddress, force } = body;
+    const { walletId: walletIdRaw, walletAddress: walletAddressRaw, force } = body;
 
-    if (!userId || !walletAddress) {
-      console.error('Validation Error: userId or walletAddress missing.', { userId, walletAddress });
-      return NextResponse.json({ error: 'userId and walletAddress are required' }, { status: 400 });
+    const parsedWalletId =
+      walletIdRaw !== undefined && walletIdRaw !== null && walletIdRaw !== ''
+        ? parseInt(String(walletIdRaw), 10)
+        : null;
+    if (walletIdRaw !== undefined && walletIdRaw !== null && isNaN(parsedWalletId as number)) {
+      throwHttp("bad_request", "Invalid walletId format", 400);
     }
-    
-    const walletId = await getOrCreateWalletId(userId, walletAddress);
+
+    const ownedWallet = await requireOwnedWallet(
+      request,
+      dbUser,
+      parsedWalletId,
+      walletAddressRaw
+    );
+    const walletId = ownedWallet.id;
+    const walletAddress = ownedWallet.wallet_address;
 
     // Step 1: Check the last sync time for the wallet
     const { data: walletData, error: walletError } = await supabaseAdmin
@@ -46,7 +52,7 @@ export async function POST(request: Request) {
       .single();
 
     if (walletError && walletError.code !== 'PGRST116') {
-      console.error('Error fetching wallet sync time:', walletError);
+      throwHttp("internal_error", "Failed to fetch wallet sync time", 500);
     }
 
     let lastSyncedAt: Date | null = null;
@@ -56,26 +62,21 @@ export async function POST(request: Request) {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
 
     if (!force && lastSyncedAt && lastSyncedAt > fiveMinutesAgo) {
-      console.log(`CACHE HIT: Wallet ${walletAddress} was synced recently. Skipping scrape.`);
-      return NextResponse.json({
+      return {
         message: 'Sync skipped, data is fresh.',
         synced: 0,
         skipped: true,
         walletId,
         last_synced_at: walletData?.last_synced_at ?? null,
-      });
+      };
     }
-    console.log(`CACHE MISS (or forced): Wallet ${walletAddress} syncing. Proceeding...`);
 
 
     const config = getGmgnConfig();
     const scraperUrl = `https://gmgn.ai/vas/api/v1/wallet_activity/sol?type=buy&type=sell&device_id=${config.device_id}&client_id=${config.client_id}&from_app=gmgn&app_ver=${config.app_ver}&tz_name=America%2FNew_York&tz_offset=-14400&app_lang=en-US&fp_did=${config.fp_did}&os=web&wallet=${walletAddress}&limit=50&cost=10`;
 
-    console.log('Constructed Scraper URL:', scraperUrl);
-
     let browser;
     try {
-      console.log('✅ Launching browser...');
       const { page, browser: browserInstance } = await connect({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -87,22 +88,17 @@ export async function POST(request: Request) {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
       );
 
-      console.log('✅ Navigating to establish context...');
       await page.goto(`https://gmgn.ai/sol/wallet/${walletAddress}`, {
         waitUntil: 'networkidle2',
       });
       
-      // Give it a moment to settle any client-side redirects
       await new Promise(r => setTimeout(r, 2000));
-      
-      console.log('✅ Fetching all trade data from gmgn.ai with pagination...');
+
       let allTrades: any[] = [];
       let nextCursor: string | null = null;
 
       do {
         const urlWithCursor: string = nextCursor ? `${scraperUrl}&cursor=${nextCursor}` : scraperUrl;
-        console.log(`Fetching page with cursor: ${nextCursor || 'initial'}`);
-
         const jsonData: any = await page.evaluate(async (url) => {
           try {
             const res = await fetch(url);
@@ -114,8 +110,7 @@ export async function POST(request: Request) {
         }, urlWithCursor);
 
         if (jsonData.error) {
-             console.error(`Error fetching page in context: ${jsonData.error}`);
-             break; // Stop pagination on error
+             break;
         }
 
         const trades = jsonData?.data?.activities || [];
@@ -128,10 +123,8 @@ export async function POST(request: Request) {
       } while (nextCursor);
 
       if (allTrades.length === 0) {
-        return NextResponse.json({ message: 'No new trades found on gmgn.ai.', synced: 0 });
+        return { message: 'No new trades found on gmgn.ai.', synced: 0 };
       }
-
-      console.log(`✅ Found a total of ${allTrades.length} trades across all pages. Syncing to database...`);
       
       const toNum = (v: unknown): number => {
         const n = typeof v === 'number' ? v : Number(v);
@@ -156,7 +149,7 @@ export async function POST(request: Request) {
           }
 
           return {
-            user_id: userId,
+            user_id: dbUser.id,
             wallet_id: walletId,
             wallet_address: walletAddress,
             transaction_hash: txHash,
@@ -173,7 +166,7 @@ export async function POST(request: Request) {
         .filter(Boolean);
 
       if (recordsToInsert.length === 0) {
-        return NextResponse.json({ message: 'No valid trades found to sync.', synced: 0 });
+        return { message: 'No valid trades found to sync.', synced: 0 };
       }
 
       const { data, error } = await supabaseAdmin
@@ -182,8 +175,7 @@ export async function POST(request: Request) {
         .select();
 
       if (error) {
-        console.error('❌ Supabase error:', error);
-        throw new Error(`Failed to insert trades: ${error.message}`);
+        throwHttp("internal_error", "Failed to sync trade data", 500);
       }
 
       // Step 4: Update the last_synced_at timestamp for the wallet
@@ -193,25 +185,17 @@ export async function POST(request: Request) {
         .eq('id', walletId);
       
       if (updateError) {
-        console.error('Failed to update last_synced_at:', updateError);
-        // Not a fatal error, but should be logged.
+        throwHttp("internal_error", "Failed to update wallet sync timestamp", 500);
       }
 
-      console.log('✅ Sync complete. Inserted records:', data);
-      console.log('Successfully fetched from URL:', scraperUrl);
-      return NextResponse.json({ message: 'Sync successful.', synced: data ? data.length : 0 });
+      return { message: 'Sync successful.', synced: data ? data.length : 0 };
 
     } catch (err: any) {
-      console.error('❌ Scraper/DB error:', err.message);
-      return NextResponse.json({ error: 'Failed to sync trade data', details: err.message }, { status: 500 });
+      throwHttp("internal_error", "Failed to sync trade data", 500);
     } finally {
       if (browser) {
-        console.log('✅ Closing browser...');
         await browser.close();
       }
     }
-  } catch (error) {
-    console.error('Error reading request body:', error);
-    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
-  }
+  });
 } 

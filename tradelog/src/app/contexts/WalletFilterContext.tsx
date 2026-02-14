@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { User, Wallet } from '@/lib/types';
+import { usePrivy } from '@privy-io/react-auth';
+import { authedFetchClient, parseApiResponse } from '@/lib/authedFetch';
 
 interface WalletFilterContextType {
   dbUserId: number | null;
@@ -19,6 +21,7 @@ const WalletFilterContext = createContext<WalletFilterContextType | undefined>(u
 const LOCAL_STORAGE_KEY = 'tradelog:selectedWallet';
 
 export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode, dbUser: User | null }) => {
+  const { ready, authenticated, getAccessToken } = usePrivy();
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [selectedWalletId, setSelectedWalletIdState] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,7 +37,13 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
     return `tradelog:selectedWalletId:${dbUser.id}`;
   }, [dbUser]);
 
+  const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
+
   const fetchWallets = useCallback(async () => {
+    if (!ready || !authenticated) {
+      setLoading(false);
+      return;
+    }
     if (!dbUser) {
       setWallets([]);
       setLoading(false);
@@ -42,9 +51,9 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
     }
     setLoading(true);
     try {
-      const response = await fetch(`/api/wallets?userId=${dbUser.id}`);
+      const response = await authedFetchClient(getBearerToken, '/api/wallets');
       if (response.ok) {
-        const data: Wallet[] = await response.json();
+        const data = await parseApiResponse<Wallet[]>(response);
         setWallets(data);
 
         // After fetching, apply fallback logic for selection if not already set
@@ -79,7 +88,7 @@ export const WalletFilterProvider = ({ children, dbUser }: { children: ReactNode
     } finally {
       setLoading(false);
     }
-  }, [dbUser, getLocalStorageKey]);
+  }, [ready, authenticated, dbUser, getLocalStorageKey, getBearerToken]);
 
   useEffect(() => {
     fetchWallets();

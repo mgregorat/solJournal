@@ -1,50 +1,36 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
-    const { searchParams } = new URL(request.url);
-    const userIdStr = searchParams.get('userId');
-    const walletIdStr = searchParams.get('walletId');
-
-    if (!userIdStr) {
-        return NextResponse.json({ error: 'userId is required' }, { status: 400 });
-    }
-
-    const userId = parseInt(userIdStr, 10);
-    if (isNaN(userId)) {
-        return NextResponse.json({ error: 'Invalid userId format' }, { status: 400 });
-    }
-
-    try {
-        console.log(`[API /journal/entries] Received request for userId: ${userId}`);
-        // The service key should be a long string of characters. If it's short or 'undefined', this is the problem.
-        console.log(`[API /journal/entries] SUPABASE_SERVICE_KEY loaded as: ${process.env.SUPABASE_SERVICE_KEY}`);
+export async function GET(request: NextRequest) {
+    return withTiming(request, async () => {
+        const { searchParams } = new URL(request.url);
+        const walletIdStr = searchParams.get('walletId');
+        const dbUser = await requireUser(request);
 
         let query = supabaseAdmin
             .from('journal_entries')
             .select('*')
-            .eq('user_id', userId);
+            .eq('user_id', dbUser.id);
 
         if (walletIdStr !== null) {
             const walletId = parseInt(walletIdStr, 10);
-            if (!isNaN(walletId)) {
-                query = query.eq('wallet_id', walletId);
+            if (isNaN(walletId)) {
+                throwHttp("bad_request", "Invalid walletId format", 400);
             }
+            const ownedWallet = await requireOwnedWallet(request, dbUser, walletId, null);
+            query = query.eq('wallet_id', ownedWallet.id);
         }
 
         const { data: journalEntries, error: journalError } = await query;
 
         if (journalError) {
-            console.error('[API /journal/entries] Supabase error:', journalError);
-            throw journalError;
+            throwHttp("internal_error", "Failed to fetch journal entries", 500);
         }
 
-        return NextResponse.json(journalEntries || []);
-
-    } catch (error: any) {
-        console.error(`[API /journal/entries] An error occurred fetching journal entries for user ${userId}:`, error.message);
-        return NextResponse.json({ error: 'Failed to fetch journal entries', details: error.message }, { status: 500 });
-    }
+        return journalEntries || [];
+    });
 }

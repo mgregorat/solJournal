@@ -1,27 +1,36 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export async function PATCH(req: NextRequest) {
-  const { tx_hash, is_flagged, is_journaled, notes, userId, walletId } = await req.json();
+  return withTiming(req, async () => {
+    const dbUser = await requireUser(req);
+    const { tx_hash, is_flagged, is_journaled, notes, walletId } = await req.json();
 
-  if (!userId || !tx_hash || !walletId) {
-    return NextResponse.json({ error: 'Missing userId, walletId, or transaction hash' }, { status: 400 });
-  }
+    if (!tx_hash || !walletId) {
+      throwHttp("bad_request", "Missing walletId or transaction hash", 400);
+    }
 
-  try {
+    const parsedWalletId = parseInt(String(walletId), 10);
+    if (isNaN(parsedWalletId)) {
+      throwHttp("bad_request", "Invalid walletId format", 400);
+    }
+
+    const ownedWallet = await requireOwnedWallet(req, dbUser, parsedWalletId, null);
+
     // Step 1: Fetch the trade to ensure it exists for this user and wallet.
     // This is a validation step. The wallet_id for the journal entry comes from the request.
     const { data: trade, error: tradeError } = await supabaseAdmin
       .from('trades')
       .select('wallet_id')
       .eq('transaction_hash', tx_hash)
-      .eq('user_id', userId)
-      .eq('wallet_id', walletId)
+      .eq('user_id', dbUser.id)
+      .eq('wallet_id', ownedWallet.id)
       .single();
 
     if (tradeError || !trade) {
-      console.error('Error fetching trade for journal entry:', tradeError);
-      return NextResponse.json({ error: 'Associated trade not found for the specified wallet.' }, { status: 404 });
+      throwHttp("not_found", "Associated trade not found for the specified wallet.", 404);
     }
 
     // Step 2: Prepare the record for upserting.
@@ -34,8 +43,8 @@ export async function PATCH(req: NextRequest) {
         notes?: any;
     } = {
         tx_hash: tx_hash,
-        user_id: userId,
-        wallet_id: walletId,
+        user_id: dbUser.id,
+        wallet_id: ownedWallet.id,
     };
 
     if (is_flagged !== undefined) {
@@ -52,14 +61,13 @@ export async function PATCH(req: NextRequest) {
     const { data: existingEntry, error: existingError } = await supabaseAdmin
       .from('journal_entries')
       .select('id')
-      .eq('user_id', userId)
-      .eq('wallet_id', walletId)
+      .eq('user_id', dbUser.id)
+      .eq('wallet_id', ownedWallet.id)
       .eq('tx_hash', tx_hash)
       .maybeSingle();
 
     if (existingError) {
-      console.error('Error checking existing journal entry:', existingError);
-      throw existingError;
+      throwHttp("internal_error", "Failed to update journal entry", 500);
     }
 
     let data;
@@ -80,13 +88,9 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (error) {
-      console.error('Error in flag/notes upsert:', error);
-      throw error;
+      throwHttp("internal_error", "Failed to update journal entry", 500);
     }
 
-    return NextResponse.json({ message: 'Journal entry updated successfully', data });
-  } catch (error: any) {
-    console.error('Error updating journal entry:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+    return { journalEntry: data };
+  });
 }

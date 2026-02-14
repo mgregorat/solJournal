@@ -1,0 +1,232 @@
+BLOCK 0.1 — EVIDENCE COMPLETION (NO CODE CHANGES)
+Repository: tradelog
+Branch: authwallet
+Scope: src/app/api/**, src/app/lib, src/lib
+
+====================================================================
+1) API ROUTE EVIDENCE TABLE (EVERY src/app/api/** route)
+====================================================================
+Legend (Auth method):
+- a) getDbUserFromPrivy (Bearer/Privy)
+- b) reads userId/user_id from query/body
+- c) no auth
+
+| Route + Method(s) | File Path | Auth Method Used (evidence) | Wallet Ownership Enforcement | Response Shape |
+|---|---|---|---|---|
+| /api/dashboard-data (GET) | src/app/api/dashboard-data/route.ts | b (user_id from query at line 102) | YES (client-trusted): `.eq('user_id', userId)` line 83 + `query.eq('wallet_id', walletId)` line 87 | raw JSON |
+| /api/debug-db (GET) | src/app/api/debug-db/route.ts | c (no bearer, no userId gate) | NO (not found) | raw JSON |
+| /api/debug-journal-entries (GET) | src/app/api/debug-journal-entries/route.ts | c | NO (not found) | raw JSON |
+| /api/debug-trades (GET) | src/app/api/debug-trades/route.ts | b (userId query at line 9) | NO (wallet ownership check not found) | raw JSON |
+| /api/holdings/gmgn (GET) | src/app/api/holdings/gmgn/route.ts | c (walletAddress query at line 30) | NO (not found) | raw JSON |
+| /api/holdings (GET) | src/app/api/holdings/route.ts | c (walletAddress query at line 7) | NO (not found) | raw JSON |
+| /api/journal-activity (GET) | src/app/api/journal-activity/route.ts | b (userId query at line 65) | YES (client-trusted): `.eq('user_id', userId)` line 83 + `tradesQuery.eq('wallet_id', walletId)` line 89 | raw JSON |
+| /api/journal/entries (GET) | src/app/api/journal/entries/route.ts | b (userId query at line 8) | YES (client-trusted): `.eq('user_id', userId)` line 28 + `query.eq('wallet_id', walletId)` line 33 | raw JSON |
+| /api/journal/flag (PATCH) | src/app/api/journal/flag/route.ts | b (userId/walletId from body at line 5) | YES (client-trusted): `.eq('user_id', userId)` line 18 + `.eq('wallet_id', walletId)` line 19; repeated at lines 55-56 | raw JSON |
+| /api/journal (DELETE) | src/app/api/journal/route.ts | b (userId from body at line 6) | NO (wallet ownership check not found) | raw JSON |
+| /api/journal/sync (POST) | src/app/api/journal/sync/route.ts | b (userId/walletAddress from body at line 32) | NO (explicit wallet ownership check by authenticated user not found; route uses `.eq('id', walletId)` lines 45,193 only) | raw JSON |
+| /api/journaled-trades (GET) | src/app/api/journaled-trades/route.ts | b (userId + walletAddress query lines 8-11) | YES (client-trusted equivalent): `.eq('user_id', userId)` line 30 + `.eq('wallet_address', walletAddress)` line 31 | raw JSON |
+| /api/pnl/classify-transactions (POST) | src/app/api/pnl/classify-transactions/route.ts | c (walletAddress body at line 11, no user auth) | NO (not found) | raw JSON |
+| /api/pnl/daily-snapshot (POST, GET) | src/app/api/pnl/daily-snapshot/route.ts | c (walletAddress body/query lines 13,62) | NO (not found) | raw JSON |
+| /api/pnl/snapshot (POST) | src/app/api/pnl/snapshot/route.ts | c (cronSecret check line 15; no bearer/user binding) | NO (not found) | raw JSON |
+| /api/pnl/today (GET) | src/app/api/pnl/today/route.ts | b (userId query line 11) | YES (client-trusted): `.eq('user_id', userId)` line 33 + optional `.eq('id', walletId)` line 38 | raw JSON |
+| /api/prices (GET) | src/app/api/prices/route.ts | c | NO (not found) | raw JSON |
+| /api/refresh-holdings (POST) | src/app/api/refresh-holdings/route.ts | c (walletAddress body line 6) | NO (not found) | raw JSON |
+| /api/sync-trades (POST) | src/app/api/sync-trades/route.ts | c (walletAddress body line 78) | NO (not found) | raw JSON |
+| /api/test-journal-query (GET) | src/app/api/test-journal-query/route.ts | b (userId query line 8) | NO (wallet ownership check not found) | raw JSON |
+| /api/token-balances (GET) | src/app/api/token-balances/route.ts | c (walletAddress query line 23) | NO (not found) | raw JSON |
+| /api/token-holdings (GET) | src/app/api/token-holdings/route.ts | c (walletAddress query line 9) | NO (not found) | raw JSON |
+| /api/trades/[id] (PUT, DELETE) | src/app/api/trades/[id]/route.ts | c (no bearer, no userId gate) | NO (not found) | raw JSON |
+| /api/trades (GET, POST) | src/app/api/trades/route.ts | GET=b (userId query line 10); POST=c (no auth gate) | GET YES (client-trusted): `.eq('user_id', userId)` line 26 + `.eq('wallet_id', walletId)` line 34; POST NO ownership check | raw JSON |
+| /api/update-gmgn-config (GET) | src/app/api/update-gmgn-config/route.ts | c | NO (not found) | raw JSON (`{ success: true/false, ... }`, non-envelope) |
+| /api/users (POST) | src/app/api/users/route.ts | c (wallet_address body line 6) | NO (not found) | raw JSON |
+| /api/wallets/challenge (POST) | src/app/api/wallets/challenge/route.ts | a (`getDbUserFromPrivy(req)` line 31) | NO (wallet ownership filter not applicable/not found in this route) | raw JSON |
+| /api/wallets (GET, POST, PATCH, DELETE) | src/app/api/wallets/route.ts | b (userId query/body lines 7,48,130,181) | PARTIAL: PATCH/DELETE enforce by wallet row check (`.eq('id', walletId)` line 140/191 + `.eq('user_id', userId)` line 156/205). GET/POST are client-supplied userId only | raw JSON |
+| /api/wallets/verify (POST) | src/app/api/wallets/verify/route.ts | a (`getDbUserFromPrivy(req)` line 42) | YES: nonce + wallet/user scoping (`.eq("user_id", dbUser.id)` line 69 + `.eq("wallet_address", walletAddress)` line 70), wallet scoping repeated lines 135-136,157-158 | MIXED: success uses `ok: true` (line 204); errors are raw `{ error: ... }` (e.g., line 62) |
+| /api/watchlist (GET, POST, DELETE) | src/app/api/watchlist/route.ts | b (`user_id` query/body lines 35,131,162) | NO (wallet ownership check not found) | raw JSON |
+
+Response envelope audit result:
+- Full standardized envelope (`ok/data/meta` + `ok:false/error`) not found.
+- Only partial envelope-like success found in `src/app/api/wallets/verify/route.ts:204` (`ok: true`).
+
+====================================================================
+2) RED FLAGS (FILE PATH + LINE NUMBERS + CATEGORY + SNIPPET)
+====================================================================
+
+1) Category: client-supplied userId auth
+- File: src/app/api/dashboard-data/route.ts:102
+- Snippet:
+  const userId = searchParams.get('user_id');
+
+2) Category: client-supplied userId auth
+- File: src/app/api/wallets/route.ts:7
+- Snippet:
+  const userId = searchParams.get('userId');
+
+3) Category: missing bearer auth
+- File: src/app/api/trades/route.ts:10
+- Snippet:
+  const userIdStr = searchParams.get('userId');
+
+4) Category: missing bearer auth
+- File: src/app/api/watchlist/route.ts:35
+- Snippet:
+  const user_id = searchParams.get('user_id');
+
+5) Category: missing wallet ownership check
+- File: src/app/api/holdings/route.ts:7
+- Snippet:
+  const walletAddress = searchParams.get("walletAddress");
+
+6) Category: missing wallet ownership check
+- File: src/app/api/token-holdings/route.ts:9
+- Snippet:
+  const walletAddress = searchParams.get('walletAddress');
+
+7) Category: debug route exposed
+- File: src/app/api/debug-db/route.ts:6
+- Snippet:
+  export async function GET(request: Request) {
+
+8) Category: debug route exposed
+- File: src/app/api/test-journal-query/route.ts:6
+- Snippet:
+  export async function GET(request: Request) {
+
+9) Category: fake user placeholder
+- File: src/app/api/trades/[id]/route.ts:4-5
+- Snippet:
+  // TODO: Get from auth once implemented
+  const FAKE_USER_ID = "55555555-5555-5555-5555-555555555555";
+
+10) Category: unsafe logging
+- File: src/app/api/journal/entries/route.ts:23
+- Snippet:
+  console.log(`[API /journal/entries] SUPABASE_SERVICE_KEY loaded as: ${process.env.SUPABASE_SERVICE_KEY}`);
+
+11) Category: unsafe logging
+- File: src/app/api/journal/sync/route.ts:31
+- Snippet:
+  console.log('Received request body:', body);
+
+12) Category: inconsistent response shape
+- File: src/app/api/wallets/verify/route.ts:204 and 62
+- Snippet:
+  ok: true,
+  ...
+  return NextResponse.json({ error: "Invalid request payload" }, { status: 400 });
+
+13) Category: inconsistent response shape
+- File: src/app/api/update-gmgn-config/route.ts:63,67
+- Snippet:
+  return NextResponse.json({ success: true, ...config });
+  ...
+  return NextResponse.json({ success: false, error: 'Failed to update config', ... }, { status: 500 });
+
+14) Category: missing bearer auth
+- File: src/app/api/users/route.ts:6
+- Snippet:
+  const { wallet_address, email } = await request.json();
+
+15) Category: client-supplied userId auth
+- File: src/app/api/journal/sync/route.ts:32
+- Snippet:
+  const { userId, walletAddress, force } = body;
+
+====================================================================
+3) DIRECTORY TREE EVIDENCE
+====================================================================
+
+src/app/api
+/dashboard-data
+/dashboard-data/route.ts
+/debug-db
+/debug-db/route.ts
+/debug-journal-entries
+/debug-journal-entries/route.ts
+/debug-trades
+/debug-trades/route.ts
+/holdings
+/holdings/gmgn
+/holdings/gmgn/route.ts
+/holdings/route.ts
+/journal
+/journal-activity
+/journal-activity/route.ts
+/journal/.DS_Store
+/journal/entries
+/journal/entries/route.ts
+/journal/flag
+/journal/flag/route.ts
+/journal/route.ts
+/journal/sync
+/journal/sync/route.ts
+/journaled-trades
+/journaled-trades/route.ts
+/pnl
+/pnl/classify-transactions
+/pnl/classify-transactions/route.ts
+/pnl/daily-snapshot
+/pnl/daily-snapshot/route.ts
+/pnl/snapshot
+/pnl/snapshot/route.ts
+/pnl/today
+/pnl/today/route.ts
+/prices
+/prices/route.ts
+/refresh-holdings
+/refresh-holdings/route.ts
+/sync-trades
+/sync-trades/route.ts
+/test-journal-query
+/test-journal-query/route.ts
+/token-balances
+/token-balances/route.ts
+/token-holdings
+/token-holdings/route.ts
+/trades
+/trades/[id]
+/trades/[id]/route.ts
+/trades/route.ts
+/update-gmgn-config
+/update-gmgn-config/route.ts
+/users
+/users/route.ts
+/wallets
+/wallets/challenge
+/wallets/challenge/route.ts
+/wallets/route.ts
+/wallets/verify
+/wallets/verify/route.ts
+/watchlist
+/watchlist/route.ts
+
+src/app/lib
+/privyServerAuth.ts
+/supabase.ts
+/supabaseAdmin.ts
+/walletUtils.ts
+
+src/lib
+/browser.ts
+/cache.ts
+/cachedFetch.ts
+/hooks
+/hooks/useAppSettings.ts
+/hooks/usePortfolioMetrics.ts
+/pnl-tracker.ts
+/pnl.ts
+/portfolio.ts
+/puppeteer-fetch.ts
+/supabase
+/supabase/admin.ts
+/trade-sync.ts
+/trades.ts
+/types.ts
+/utils.ts
+
+====================================================================
+NOT FOUND STATEMENTS
+====================================================================
+- Full standardized envelope `{ ok: true, data, meta } / { ok: false, error }` across all routes: not found.
+- Bearer auth gate (`getDbUserFromPrivy`) on most non-wallet routes: not found.
+- Uniform wallet ownership check tied to authenticated bearer identity across wallet-scoped routes: not found.

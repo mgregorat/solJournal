@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { connect } from "puppeteer-real-browser";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { requireOwnedWallet, requireUser } from "@/app/lib/authorization";
+import { throwHttp, withTiming } from "@/app/lib/http";
 
 export const dynamic = "force-dynamic";
 
@@ -24,60 +26,72 @@ function getGmgnConfig() {
 }
 
 export async function GET(req: NextRequest) {
-  let browser: any;
-  try {
-    const { searchParams } = new URL(req.url);
-    const walletAddress = searchParams.get("walletAddress");
+  return withTiming(req, async () => {
+    let browser: any;
+    try {
+      const { searchParams } = new URL(req.url);
+      const walletIdParam = searchParams.get("walletId");
+      const walletAddressParam = searchParams.get("walletAddress");
 
-    if (!walletAddress) {
-      return NextResponse.json({ error: "walletAddress is required" }, { status: 400 });
-    }
+      const dbUser = await requireUser(req);
 
-    const cached = holdingsCache.get(walletAddress);
-    if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-      const cachedSolBalance = toNum(cached.data?.solBalance);
-      const cachedSolUsdValue = toNum(cached.data?.solUsdValue);
-      const hasIncompleteSolPricing = cachedSolBalance > 0 && cachedSolUsdValue === 0;
-      if (!hasIncompleteSolPricing) {
-        return NextResponse.json(cached.data);
+      let walletId: number | null = null;
+      if (walletIdParam) {
+        walletId = parseInt(walletIdParam, 10);
+        if (isNaN(walletId)) {
+          throwHttp("bad_request", "Invalid walletId format", 400);
+        }
       }
-    }
+      const walletAddress = walletAddressParam?.trim() || null;
 
-    const config = getGmgnConfig();
-    const holdingsUrl =
-      `https://gmgn.ai/pf/api/v1/wallet/sol/${walletAddress}/holdings` +
-      `?device_id=${config.device_id}` +
-      `&fp_did=${config.fp_did}` +
-      `&client_id=${config.client_id}` +
-      `&from_app=gmgn` +
-      `&app_ver=${config.app_ver}` +
-      `&tz_name=America%2FNew_York` +
-      `&tz_offset=-18000` +
-      `&app_lang=en-US` +
-      `&os=web` +
-      `&worker=0` +
-      `&limit=50` +
-      `&order_by=last_active_timestamp` +
-      `&direction=desc` +
-      `&hide_airdrop=false` +
-      `&hide_abnormal=false` +
-      `&hide_closed=true` +
-      `&sellout=true` +
-      `&showsmall=true`;
+      const ownedWallet = await requireOwnedWallet(req, dbUser, walletId, walletAddress);
+      const resolvedWalletAddress = ownedWallet.wallet_address;
 
-    const { page, browser: browserInstance } = await connect({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      turnstile: true,
-    });
-    browser = browserInstance;
+      const cached = holdingsCache.get(resolvedWalletAddress);
+      if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+        const cachedSolBalance = toNum(cached.data?.solBalance);
+        const cachedSolUsdValue = toNum(cached.data?.solUsdValue);
+        const hasIncompleteSolPricing = cachedSolBalance > 0 && cachedSolUsdValue === 0;
+        if (!hasIncompleteSolPricing) {
+          return cached.data;
+        }
+      }
 
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    );
+      const config = getGmgnConfig();
+      const holdingsUrl =
+        `https://gmgn.ai/pf/api/v1/wallet/sol/${resolvedWalletAddress}/holdings` +
+        `?device_id=${config.device_id}` +
+        `&fp_did=${config.fp_did}` +
+        `&client_id=${config.client_id}` +
+        `&from_app=gmgn` +
+        `&app_ver=${config.app_ver}` +
+        `&tz_name=America%2FNew_York` +
+        `&tz_offset=-18000` +
+        `&app_lang=en-US` +
+        `&os=web` +
+        `&worker=0` +
+        `&limit=50` +
+        `&order_by=last_active_timestamp` +
+        `&direction=desc` +
+        `&hide_airdrop=false` +
+        `&hide_abnormal=false` +
+        `&hide_closed=true` +
+        `&sellout=true` +
+        `&showsmall=true`;
+
+      const { page, browser: browserInstance } = await connect({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        turnstile: true,
+      });
+      browser = browserInstance;
+
+      await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      );
 
     // Establish browser session/cookies on GMGN before API fetch.
-    await page.goto(`https://gmgn.ai/sol/wallet/${walletAddress}`, {
+    await page.goto(`https://gmgn.ai/sol/wallet/${resolvedWalletAddress}`, {
       waitUntil: "networkidle2",
       timeout: 60000,
     });
@@ -188,7 +202,7 @@ export async function GET(req: NextRequest) {
           return Number(
             data?.metadata?.tokens?.So11111111111111111111111111111111111111112?.price_usdt || 0
           );
-        }, walletAddress);
+        }, resolvedWalletAddress);
         if (Number.isFinite(solscanPrice) && solscanPrice > 0) {
           solPriceUsd = solscanPrice;
         }
@@ -228,7 +242,7 @@ export async function GET(req: NextRequest) {
         for (const rpcUrl of rpcCandidates) {
           try {
             const connection = new Connection(rpcUrl, "confirmed");
-            const lamports = await connection.getBalance(new PublicKey(walletAddress));
+            const lamports = await connection.getBalance(new PublicKey(resolvedWalletAddress));
             const rpcSol = lamports / 1_000_000_000;
             if (rpcSol > 0) {
               solBalance = rpcSol;
@@ -245,29 +259,26 @@ export async function GET(req: NextRequest) {
 
     const solUsdValue = solBalance > 0 && solPriceUsd > 0 ? solBalance * solPriceUsd : 0;
 
-    const responsePayload = {
-      walletAddress,
-      solBalance,
-      solPriceUsd,
-      solUsdValue,
-      holdings,
-      raw: gmgnJson,
-    };
+      const responsePayload = {
+        walletAddress: resolvedWalletAddress,
+        solBalance,
+        solPriceUsd,
+        solUsdValue,
+        holdings,
+        raw: gmgnJson,
+      };
 
     // Avoid caching empty snapshots so transient responses don't get sticky.
-    if ((holdings.length > 0 || solBalance > 0) && !(solBalance > 0 && solUsdValue === 0)) {
-      holdingsCache.set(walletAddress, { ts: Date.now(), data: responsePayload });
+      if ((holdings.length > 0 || solBalance > 0) && !(solBalance > 0 && solUsdValue === 0)) {
+        holdingsCache.set(resolvedWalletAddress, { ts: Date.now(), data: responsePayload });
+      }
+      return responsePayload;
+    } catch {
+      throwHttp("provider_unavailable", "Failed to fetch live holdings", 502);
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
     }
-    return NextResponse.json(responsePayload);
-  } catch (error: any) {
-    console.error("GMGN holdings route error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch live holdings", details: error?.message || "Unknown error" },
-      { status: 500 }
-    );
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
-  }
+  });
 }

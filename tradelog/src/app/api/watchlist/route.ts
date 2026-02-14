@@ -1,6 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { getBrowser } from '@/lib/browser'; // Use the shared browser instance
+import { requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 // Define types for the watchlist items
 interface WatchlistItem {
@@ -28,28 +30,25 @@ const getLaunchOptions = () => {
 
 // The fetchTokenDetails function is no longer needed, we'll do this in the GET handler.
 
-// GET /api/watchlist?user_id=...
-export async function GET(request: Request) {
-    try {
-        const { searchParams } = new URL(request.url);
-        const user_id = searchParams.get('user_id');
-
-        if (!user_id) {
-            return NextResponse.json({ error: 'user_id is required' }, { status: 400 });
-        }
+// GET /api/watchlist (bearer-auth scoped)
+export async function GET(request: NextRequest) {
+    return withTiming(request, async () => {
+        const dbUser = await requireUser(request);
 
         const { data: watchlistItems, error } = await supabaseAdmin
             .from('watchlist')
             .select('token_address')
-            .eq('user_id', user_id);
+            .eq('user_id', dbUser.id);
 
-        if (error) throw error;
+        if (error) {
+            throwHttp("internal_error", "Failed to fetch watchlist", 500);
+        }
 
         const typedWatchlistItems = watchlistItems as WatchlistItem[];
         const mints = typedWatchlistItems.map(item => item.token_address);
         
         if (mints.length === 0) {
-            return NextResponse.json([]);
+            return [];
         }
 
         // --- HIGH-PERFORMANCE BROWSER FETCH ---
@@ -109,74 +108,64 @@ export async function GET(request: Request) {
                 };
             }).filter(Boolean); // Filter out any nulls from failed fetches
 
-            return NextResponse.json(successfulItems);
+            return successfulItems;
 
         } catch(e) {
-            console.error('Error during page evaluation:', e);
-            throw e; // Let the main error handler catch it
+            throwHttp("provider_unavailable", "Failed to fetch watchlist token data", 502);
         } finally {
             await page.close();
         }
-    } catch (error: any) {
-        console.error('Watchlist GET Error:', error);
-        return NextResponse.json({ error: 'Failed to fetch watchlist' }, { status: 500 });
-    }
+    });
 }
 
 // POST /api/watchlist
-export async function POST(request: Request) {
-  try {
-    const { user_id, token_address } = await request.json();
+export async function POST(request: NextRequest) {
+  return withTiming(request, async () => {
+    const dbUser = await requireUser(request);
+    const { token_address } = await request.json();
 
-    if (!user_id || !token_address) {
-      return NextResponse.json({ error: 'user_id and token_address are required' }, { status: 400 });
+    if (!token_address) {
+      throwHttp("bad_request", "token_address is required", 400);
     }
 
     const { data, error } = await supabaseAdmin
       .from('watchlist')
-      .insert({ user_id, token_address })
+      .insert({ user_id: dbUser.id, token_address })
       .select()
       .single();
 
     if (error) {
-      console.error('Supabase error:', error);
       // Handle unique constraint violation gracefully
       if (error.code === '23505') {
-        return NextResponse.json({ error: 'Token already in watchlist' }, { status: 409 });
+        throwHttp("conflict", "Token already in watchlist", 409);
       }
-      return NextResponse.json({ error: 'Failed to add to watchlist' }, { status: 500 });
+      throwHttp("internal_error", "Failed to add to watchlist", 500);
     }
 
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error('Request error:', error);
-    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
-  }
+    return data;
+  });
 }
 
 // DELETE /api/watchlist
-export async function DELETE(request: Request) {
-    try {
-        const { user_id, token_address } = await request.json();
+export async function DELETE(request: NextRequest) {
+    return withTiming(request, async () => {
+        const dbUser = await requireUser(request);
+        const { token_address } = await request.json();
 
-        if (!user_id || !token_address) {
-            return NextResponse.json({ error: 'user_id and token_address are required' }, { status: 400 });
+        if (!token_address) {
+            throwHttp("bad_request", "token_address is required", 400);
         }
 
         const { error } = await supabaseAdmin
             .from('watchlist')
             .delete()
-            .eq('user_id', user_id)
+            .eq('user_id', dbUser.id)
             .eq('token_address', token_address);
 
         if (error) {
-            console.error('Supabase error:', error);
-            return NextResponse.json({ error: 'Failed to remove from watchlist' }, { status: 500 });
+            throwHttp("internal_error", "Failed to remove from watchlist", 500);
         }
 
-        return NextResponse.json({ message: 'Successfully removed from watchlist' });
-    } catch (error) {
-        console.error('Request error:', error);
-        return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
-    }
+        return { success: true };
+    });
 }

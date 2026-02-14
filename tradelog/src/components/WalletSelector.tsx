@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePrivy } from "@privy-io/react-auth";
 import { useWalletFilter } from "@/app/contexts/WalletFilterContext";
 import { User } from "@/lib/types";
 import { shortenAddress } from "@/lib/utils";
@@ -16,12 +17,15 @@ import {
 import { Check, ChevronsUpDown } from "lucide-react";
 import toast from 'react-hot-toast';
 import { LinkWalletModal } from "@/components/LinkWalletModal";
+import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
 
 interface WalletSelectorProps {
   dbUser: User | null;
 }
 
 export const WalletSelector = ({ dbUser }: WalletSelectorProps) => {
+  const { getAccessToken } = usePrivy();
+  const getBearerToken = async () => (await getAccessToken?.()) || null;
   const { wallets, selectedWalletId, selectedWallet, setSelectedWalletId, refreshWallets, loading } = useWalletFilter();
   const [isLinkWalletModalOpen, setIsLinkWalletModalOpen] = useState(false);
 
@@ -42,16 +46,12 @@ export const WalletSelector = ({ dbUser }: WalletSelectorProps) => {
     }
 
     try {
-      const response = await fetch('/api/wallets', {
+      const response = await authedFetchClient(getBearerToken, '/api/wallets', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: dbUser.id, walletId: selectedWalletId, label: nextLabel }),
+        body: JSON.stringify({ walletId: selectedWalletId, label: nextLabel }),
       });
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to rename wallet");
-      }
+      await parseApiResponse<{ label?: string | null }>(response);
 
       toast.success("Wallet label updated.");
       await refreshWallets();

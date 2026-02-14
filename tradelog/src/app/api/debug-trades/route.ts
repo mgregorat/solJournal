@@ -1,51 +1,57 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { requireInternalRequest } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
-  try {
+export async function GET(request: NextRequest) {
+  return withTiming(request, async () => {
+    requireInternalRequest(request);
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
+    const targetUserId = searchParams.get('targetUserId');
 
-    if (!userId) {
-        // If no userId, just fetch the last 10 trades globally to see if ANYTHING exists
+    if (!targetUserId) {
+        // If no targetUserId, just fetch the last 10 trades globally to see if ANYTHING exists
         const { data: globalTrades, error: globalError } = await supabaseAdmin
             .from('trades')
             .select('*')
             .limit(10);
         
-        return NextResponse.json({ 
-            message: "No userId provided. Showing last 10 global trades.", 
+        return { 
+            data: {
+            message: "No targetUserId provided. Showing last 10 global trades.", 
             count: globalTrades?.length, 
             trades: globalTrades, 
             error: globalError 
-        });
+            },
+        };
     }
 
     // Fetch trades for specific user
     const { data: userTrades, error: userTradesError } = await supabaseAdmin
         .from('trades')
         .select('*')
-        .eq('user_id', userId);
+        .eq('user_id', targetUserId);
 
     // Fetch wallets for specific user
     const { data: userWallets, error: userWalletsError } = await supabaseAdmin
         .from('wallets')
         .select('*')
-        .eq('user_id', userId);
+        .eq('user_id', targetUserId);
 
-    return NextResponse.json({
-        userId,
+    if (userTradesError || userWalletsError) {
+      throwHttp("internal_error", "Failed to fetch debug trades", 500);
+    }
+
+    return {
+      data: {
+        targetUserId,
         tradeCount: userTrades?.length,
         walletCount: userWallets?.length,
         wallets: userWallets,
         tradesSample: userTrades?.slice(0, 5), // Show first 5
-        tradesError: userTradesError,
-        walletsError: userWalletsError
-    });
-
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+      },
+    };
+  });
 }

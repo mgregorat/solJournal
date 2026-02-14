@@ -2,13 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { usePrivy } from '@privy-io/react-auth';
 import { TrendingUp, TrendingDown, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { cn } from '@/lib/utils';
 import { DailyPnlData } from '@/lib/pnl'; // Import the type
 import { useWalletFilter } from '@/app/contexts/WalletFilterContext';
+import { authedFetchClient, parseApiResponse } from '@/lib/authedFetch';
 
 export const DailyPnlDisplay = () => {
+  const { getAccessToken } = usePrivy();
+  const getBearerToken = async () => (await getAccessToken?.()) || null;
   const { publicKey } = useWallet();
   const { dbUserId, selectedWalletId, selectedWallet } = useWalletFilter();
   const [pnlData, setPnlData] = useState<DailyPnlData | null>(null);
@@ -25,17 +29,13 @@ export const DailyPnlDisplay = () => {
       setIsLoading(true);
       setError(null);
       try {
-        let url = `/api/pnl/today?userId=${dbUserId}`;
+        let url = `/api/pnl/today`;
         if (selectedWalletId !== null) {
-          url += `&walletId=${selectedWalletId}`;
+          url += `?walletId=${selectedWalletId}`;
         }
 
-        const response = await fetch(url);
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error || 'Failed to fetch P&L data');
-        }
-        const data: DailyPnlData = await response.json();
+        const response = await authedFetchClient(getBearerToken, url);
+        const data = await parseApiResponse<DailyPnlData>(response);
         setPnlData(data);
       } catch (err: any) {
         setError(err.message);

@@ -1,17 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { 
   fetchAndClassifyTransactions, 
   saveTransactionClassifications 
 } from '@/lib/pnl-tracker';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  try {
+  return withTiming(req, async () => {
     const { walletAddress, limit = 100 } = await req.json();
 
     if (!walletAddress) {
-      return NextResponse.json({ error: 'Wallet address is required' }, { status: 400 });
+      throwHttp("bad_request", "Wallet address is required", 400);
     }
 
     // Fetch and classify transactions
@@ -22,12 +23,9 @@ export async function POST(req: NextRequest) {
       await saveTransactionClassifications(classifications);
     }
 
-    return NextResponse.json({
+    return {
       message: `Classified ${classifications.length} transactions`,
       classifications: classifications
-    });
-  } catch (error: any) {
-    console.error('Transaction classification API error:', error);
-    return NextResponse.json({ error: error.message || 'An unexpected error occurred.' }, { status: 500 });
-  }
+    };
+  });
 } 

@@ -1,86 +1,87 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { 
   createDailySnapshot, 
   calculateDailyPnL, 
   getDailyPnLData,
   rebuildDailySnapshot 
 } from '@/lib/pnl-tracker';
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  try {
-    const { walletAddress, date, action } = await req.json();
+  return withTiming(req, async () => {
+    const dbUser = await requireUser(req);
+    const { walletId: walletIdRaw, walletAddress: walletAddressInput, date, action } = await req.json();
 
-    console.log('P&L API POST request:', { walletAddress, date, action });
-
-    if (!walletAddress) {
-      return NextResponse.json({ error: 'Wallet address is required' }, { status: 400 });
+    const parsedWalletId =
+      walletIdRaw !== undefined && walletIdRaw !== null && walletIdRaw !== ''
+        ? parseInt(String(walletIdRaw), 10)
+        : null;
+    if (walletIdRaw !== undefined && walletIdRaw !== null && isNaN(parsedWalletId as number)) {
+      throwHttp("bad_request", "Invalid walletId format", 400);
     }
+
+    let walletAddressRaw: string | null = null;
+    if (parsedWalletId === null) {
+      walletAddressRaw =
+        typeof walletAddressInput === 'string' ? walletAddressInput.trim() : '';
+      if (!walletAddressRaw) {
+        throwHttp("bad_request", "walletAddress is required when walletId is not provided", 400);
+      }
+    }
+
+    const ownedWallet = await requireOwnedWallet(req, dbUser, parsedWalletId, walletAddressRaw);
+    const walletAddress = ownedWallet.wallet_address;
 
     const snapshotDate = date ? new Date(date) : new Date();
 
     switch (action) {
       case 'create':
-        console.log('Creating daily snapshot...');
-        const snapshot = await createDailySnapshot(walletAddress, snapshotDate);
-        console.log('Snapshot created:', snapshot);
-        return NextResponse.json(snapshot);
+        return await createDailySnapshot(walletAddress, snapshotDate);
 
       case 'calculate':
-        console.log('Calculating P&L...');
-        const pnlSnapshot = await calculateDailyPnL(walletAddress, snapshotDate);
-        console.log('P&L calculated:', pnlSnapshot);
-        return NextResponse.json(pnlSnapshot);
+        return await calculateDailyPnL(walletAddress, snapshotDate);
 
       case 'rebuild':
-        console.log('Rebuilding snapshot...');
-        const rebuiltSnapshot = await rebuildDailySnapshot(walletAddress, snapshotDate);
-        console.log('Snapshot rebuilt:', rebuiltSnapshot);
-        return NextResponse.json(rebuiltSnapshot);
+        return await rebuildDailySnapshot(walletAddress, snapshotDate);
 
       default:
-        return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
+        throwHttp("bad_request", "Invalid action", 400);
     }
-  } catch (error: any) {
-    console.error('Daily snapshot API error:', error);
-    console.error('Error stack:', error.stack);
-    return NextResponse.json({ 
-      error: error.message || 'An unexpected error occurred.',
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    }, { status: 500 });
-  }
+  });
 }
 
 export async function GET(req: NextRequest) {
-  try {
+  return withTiming(req, async () => {
+    const dbUser = await requireUser(req);
     const { searchParams } = new URL(req.url);
-    const walletAddress = searchParams.get('walletAddress');
+    const walletAddressParam = searchParams.get('walletAddress');
+    const walletIdStr = searchParams.get('walletId');
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
 
-    console.log('P&L API GET request:', { walletAddress, startDate, endDate });
-
-    if (!walletAddress) {
-      return NextResponse.json({ error: 'Wallet address is required' }, { status: 400 });
+    const parsedWalletId = walletIdStr ? parseInt(walletIdStr, 10) : null;
+    if (walletIdStr && isNaN(parsedWalletId as number)) {
+      throwHttp("bad_request", "Invalid walletId format", 400);
     }
+
+    let walletAddressRaw: string | null = null;
+    if (parsedWalletId === null) {
+      walletAddressRaw = walletAddressParam?.trim() || null;
+      if (!walletAddressRaw) {
+        throwHttp("bad_request", "walletAddress is required when walletId is not provided", 400);
+      }
+    }
+
+    const ownedWallet = await requireOwnedWallet(req, dbUser, parsedWalletId, walletAddressRaw);
+    const walletAddress = ownedWallet.wallet_address;
 
     const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
     const end = endDate ? new Date(endDate) : new Date();
 
-    console.log('Fetching P&L data for date range:', { start, end });
-
     const pnlData = await getDailyPnLData(walletAddress, start, end);
-    
-    console.log('P&L data fetched:', { count: pnlData.length });
-    
-    return NextResponse.json(pnlData);
-  } catch (error: any) {
-    console.error('Get P&L data API error:', error);
-    console.error('Error stack:', error.stack);
-    return NextResponse.json({ 
-      error: error.message || 'An unexpected error occurred.',
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    }, { status: 500 });
-  }
+    return pnlData;
+  });
 } 

@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { TextEncoder } from "util";
 import { supabaseAdmin } from "@/app/lib/supabaseAdmin";
 import { getDbUserFromPrivy } from "@/app/lib/privyServerAuth";
+import { throwHttp, withTiming } from "@/app/lib/http";
 
 const SOLANA_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-const FREE_LIMIT = 2;
+const FREE_LIMIT = 3;
 const PAID_LIMIT = 10; // Reserved for future plan checks.
 type WalletRecord = { id: number; wallet_address: string; label: string | null; created_at: string | null };
 type NonceRecord = { id: number; message: string; used_at: string | null; expires_at: string };
@@ -38,10 +39,10 @@ function decodeSignature(signature: string): Uint8Array | null {
 }
 
 export async function POST(req: NextRequest) {
-  try {
+  return withTiming(req, async () => {
     const dbUser = await getDbUserFromPrivy(req);
     if (!dbUser) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      throwHttp("unauthorized", "Unauthorized", 401);
     }
 
     const body = await req.json().catch(() => ({}));
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
       message.length === 0 ||
       signature.length === 0
     ) {
-      return NextResponse.json({ error: "Invalid request payload" }, { status: 400 });
+      throwHttp("bad_request", "Invalid request payload", 400);
     }
 
     const nowIso = new Date().toISOString();
@@ -73,34 +74,34 @@ export async function POST(req: NextRequest) {
 
     const validNonce = nonceRow as NonceRecord | null;
     if (!validNonce) {
-      return NextResponse.json({ error: "Invalid or expired challenge" }, { status: 401 });
+      throwHttp("unauthorized", "Invalid or expired challenge", 401);
     }
     if (new Date(validNonce.expires_at).getTime() <= Date.now()) {
-      return NextResponse.json({ error: "Invalid or expired challenge" }, { status: 401 });
+      throwHttp("unauthorized", "Invalid or expired challenge", 401);
     }
     if (validNonce.used_at) {
-      return NextResponse.json({ error: "Challenge already used" }, { status: 409 });
+      throwHttp("conflict", "Challenge already used", 409);
     }
 
     if (message !== validNonce.message) {
-      return NextResponse.json({ error: "Invalid challenge message" }, { status: 401 });
+      throwHttp("unauthorized", "Invalid challenge message", 401);
     }
 
     let publicKeyBytes: Uint8Array;
     try {
       publicKeyBytes = bs58.decode(walletAddress);
     } catch {
-      return NextResponse.json({ error: "Invalid walletAddress" }, { status: 400 });
+      throwHttp("bad_request", "Invalid walletAddress", 400);
     }
     const signatureBytes = decodeSignature(signature);
     if (!signatureBytes) {
-      return NextResponse.json({ error: "Invalid signature format" }, { status: 401 });
+      throwHttp("unauthorized", "Invalid signature format", 401);
     }
 
     const messageBytes = new TextEncoder().encode(validNonce.message);
     const isValid = nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes);
     if (!isValid) {
-      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+      throwHttp("unauthorized", "Invalid signature", 401);
     }
 
     const { count: walletCount, error: walletCountError } = await supabaseAdmin
@@ -109,7 +110,7 @@ export async function POST(req: NextRequest) {
       .eq("user_id", dbUser.id);
 
     if (walletCountError) {
-      return NextResponse.json({ error: "Failed to enforce wallet limit" }, { status: 500 });
+      throwHttp("internal_error", "Failed to enforce wallet limit", 500);
     }
 
     const effectiveLimit = FREE_LIMIT;
@@ -122,10 +123,7 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
 
       if (!existingWallet) {
-        return NextResponse.json(
-          { error: "Wallet limit reached", upgrade_required: true, limit: effectiveLimit, paid_limit: PAID_LIMIT },
-          { status: 403 }
-        );
+        throwHttp("forbidden", "Wallet limit reached", 403);
       }
     }
 
@@ -159,7 +157,7 @@ export async function POST(req: NextRequest) {
             .single();
           walletRecord = existingAfterConflict.data as WalletRecord | null;
         } else {
-          return NextResponse.json({ error: "Failed to link wallet" }, { status: 500 });
+          throwHttp("internal_error", "Failed to link wallet", 500);
         }
       } else {
         walletRecord = inserted.data as WalletRecord;
@@ -168,7 +166,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!walletRecord) {
-      return NextResponse.json({ error: "Failed to resolve linked wallet" }, { status: 500 });
+      throwHttp("internal_error", "Failed to resolve linked wallet", 500);
     }
 
     const { data: usedNonceRow } = await supabaseAdmin
@@ -180,32 +178,12 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (!usedNonceRow) {
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[wallets/verify] nonce mark-used race", {
-          userId: dbUser.id,
-          walletAddress,
-          nonceRowId: validNonce.id,
-          markedUsed: false,
-        });
-      }
-      return NextResponse.json({ error: "Challenge already used" }, { status: 409 });
+      throwHttp("conflict", "Challenge already used", 409);
     }
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[wallets/verify] nonce verified", {
-        userId: dbUser.id,
-        walletAddress,
-        nonceRowId: validNonce.id,
-        markedUsed: true,
-      });
-    }
-
-    return NextResponse.json({
-      ok: true,
+    return {
       wallet: walletRecord,
       newlyLinked,
-    });
-  } catch {
-    return NextResponse.json({ error: "Unexpected server error" }, { status: 500 });
-  }
+    };
+  });
 }

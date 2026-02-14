@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { shortenAddress } from "@/lib/utils";
 import { useWalletFilter } from "@/app/contexts/WalletFilterContext";
+import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
 
 type VerifyWallet = {
   id: number;
@@ -43,31 +44,20 @@ export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModa
   const { publicKey, connected, signMessage } = useWallet();
   const { setVisible } = useWalletModal();
   const { login, getAccessToken } = usePrivy();
+  const getBearerToken = async () => (await getAccessToken?.()) || null;
   const [isLinking, setIsLinking] = useState(false);
   const [upgradeInfo, setUpgradeInfo] = useState<UpgradeInfo | null>(null);
-  const FREE_LIMIT = 2;
+  const FREE_LIMIT = 3;
   const PAID_LIMIT = 10;
 
   const walletAddress = publicKey?.toBase58() || null;
   const walletLabel = walletAddress ? shortenAddress(walletAddress) : null;
 
-  const getAuthHeaders = async () => {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    const token = (await getAccessToken?.()) || null;
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    return headers;
-  };
-
   const getFreshWalletCount = async () => {
     if (!dbUserId) return wallets.length;
     try {
-      const res = await fetch(`/api/wallets?userId=${dbUserId}`);
-      if (!res.ok) return wallets.length;
-      const data = await res.json();
+      const res = await authedFetchClient(getBearerToken, "/api/wallets");
+      const data = await parseApiResponse<VerifyWallet[]>(res);
       return Array.isArray(data) ? data.length : wallets.length;
     } catch {
       return wallets.length;
@@ -99,16 +89,15 @@ export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModa
 
     setIsLinking(true);
     try {
-      const headers = await getAuthHeaders();
       let retryOnUsedChallenge = false;
 
       for (let attempt = 0; attempt < 2; attempt++) {
-        const challengeRes = await fetch("/api/wallets/challenge", {
+        const challengeRes = await authedFetchClient(getBearerToken, "/api/wallets/challenge", {
           method: "POST",
-          headers,
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ walletAddress }),
         });
-        const challengeData = await parseJsonSafe(challengeRes);
+        const challengeBody = await parseJsonSafe(challengeRes);
 
         if (challengeRes.status === 401) {
           toast.error("Session expired. Please log in again.");
@@ -116,8 +105,13 @@ export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModa
           return;
         }
         if (!challengeRes.ok) {
-          throw new Error(challengeData?.error || "Failed to create signing challenge.");
+          throw new Error(
+            challengeBody?.error?.message ||
+              challengeBody?.error ||
+              "Failed to create signing challenge."
+          );
         }
+        const challengeData = challengeBody?.data ?? challengeBody;
 
         const message = String(challengeData.message || "");
         const nonce = String(challengeData.nonce || "");
@@ -128,9 +122,9 @@ export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModa
         const signatureBytes = await signMessage(new TextEncoder().encode(message));
         const signature = bs58.encode(signatureBytes);
 
-        const verifyRes = await fetch("/api/wallets/verify", {
+        const verifyRes = await authedFetchClient(getBearerToken, "/api/wallets/verify", {
           method: "POST",
-          headers,
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             walletAddress,
             nonce,
@@ -138,18 +132,18 @@ export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModa
             signature,
           }),
         });
-        const verifyData = await parseJsonSafe(verifyRes);
+        const verifyBody = await parseJsonSafe(verifyRes);
 
         if (verifyRes.status === 401) {
           toast.error("Authentication failed. Please log in again.");
           login();
           return;
         }
-        if (verifyRes.status === 403 && verifyData?.upgrade_required) {
+        if (verifyRes.status === 403 && verifyBody?.upgrade_required) {
           const linkedCount = await getFreshWalletCount();
           setUpgradeInfo({
-            limit: Number(verifyData?.limit) || undefined,
-            paid_limit: Number(verifyData?.paid_limit) || undefined,
+            limit: Number(verifyBody?.limit) || undefined,
+            paid_limit: Number(verifyBody?.paid_limit) || undefined,
             linkedCount,
           });
           return;
@@ -159,8 +153,11 @@ export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModa
           continue;
         }
         if (!verifyRes.ok) {
-          throw new Error(verifyData?.error || "Failed to link wallet.");
+          throw new Error(
+            verifyBody?.error?.message || verifyBody?.error || "Failed to link wallet."
+          );
         }
+        const verifyData = verifyBody?.data ?? verifyBody;
 
         const wallet = verifyData?.wallet as VerifyWallet | undefined;
         if (!wallet?.id) {

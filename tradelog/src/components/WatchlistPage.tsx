@@ -9,6 +9,7 @@ import { Trash2, AlertTriangle, Bell, BellOff, ArrowUp, ArrowDown, Copy, Clock, 
 import { toast } from "sonner";
 import { cn } from '@/lib/utils';
 import { TokenDetails, User } from '@/lib/types';
+import { authedFetchClient, parseApiResponse } from '@/lib/authedFetch';
 
 interface WatchlistPageProps {
     initialWatchlist: TokenDetails[];
@@ -43,6 +44,8 @@ const PriceChangeDisplay = ({
 };
 
 export const WatchlistPage = ({ initialWatchlist = [], dbUser }: WatchlistPageProps) => {
+  const { getAccessToken } = usePrivy();
+  const getBearerToken = async () => (await getAccessToken?.()) || null;
   const [watchlist, setWatchlist] = useState<TokenDetails[]>(initialWatchlist);
   const [newMint, setNewMint] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -115,22 +118,20 @@ export const WatchlistPage = ({ initialWatchlist = [], dbUser }: WatchlistPagePr
     setIsLoading(true);
 
     try {
-      const dbResponse = await fetch('/api/watchlist', {
+      const dbResponse = await authedFetchClient(getBearerToken, '/api/watchlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: dbUser.id, token_address: newMint.trim() }),
+        body: JSON.stringify({ token_address: newMint.trim() }),
       });
-      
-      if (!dbResponse.ok) {
-        throw new Error((await dbResponse.json()).error || "Failed to add token.");
-      }
+
+      await parseApiResponse(dbResponse);
 
       // Instead of calling another endpoint, we can just refetch the whole list
       // or optimistically update. For now, let's refetch for simplicity,
       // though this could be optimized later.
-      const listResponse = await fetch(`/api/watchlist?user_id=${dbUser.id}`);
+      const listResponse = await authedFetchClient(getBearerToken, '/api/watchlist');
       if (listResponse.ok) {
-        setWatchlist(await listResponse.json());
+        setWatchlist(await parseApiResponse<TokenDetails[]>(listResponse));
         toast.success(`Token added to your watchlist!`);
       }
       setNewMint('');
@@ -147,15 +148,13 @@ export const WatchlistPage = ({ initialWatchlist = [], dbUser }: WatchlistPagePr
     if (!dbUser) return toast.error("User not authenticated.");
 
     try {
-        const response = await fetch('/api/watchlist', {
+        const response = await authedFetchClient(getBearerToken, '/api/watchlist', {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: dbUser.id, token_address: mint }),
+            body: JSON.stringify({ token_address: mint }),
         });
 
-        if (!response.ok) {
-            throw new Error("Failed to remove token from watchlist.");
-        }
+        await parseApiResponse(response);
 
         setWatchlist(watchlist.filter(t => t.mint !== mint));
         toast.success("Token removed from watchlist.");

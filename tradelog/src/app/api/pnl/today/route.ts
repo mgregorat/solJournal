@@ -1,55 +1,54 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { getTodaysPnl } from '@/lib/pnl';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 export const dynamic = 'force-dynamic';
 
 // This endpoint is for the UI to fetch the latest P&L data
 export async function GET(req: NextRequest) {
-  try {
+  return withTiming(req, async () => {
+    const dbUser = await requireUser(req);
     const { searchParams } = new URL(req.url);
-    const userIdStr = searchParams.get('userId');
     const walletIdStr = searchParams.get('walletId');
     const walletAddress = searchParams.get('walletAddress');
 
-    // Backward compatibility path for older callers
-    if (!userIdStr && walletAddress) {
-      const pnlData = await getTodaysPnl(walletAddress);
-      return NextResponse.json(pnlData);
-    }
-
-    if (!userIdStr) {
-      return NextResponse.json({ error: 'userId is required' }, { status: 400 });
-    }
-
-    const userId = parseInt(userIdStr, 10);
-    if (isNaN(userId)) {
-      return NextResponse.json({ error: 'Invalid userId format' }, { status: 400 });
-    }
-
-    let walletsQuery = supabaseAdmin
-      .from('wallets')
-      .select('id, wallet_address')
-      .eq('user_id', userId);
-
-    if (walletIdStr !== null) {
-      const walletId = parseInt(walletIdStr, 10);
-      if (!isNaN(walletId)) {
-        walletsQuery = walletsQuery.eq('id', walletId);
+    let ownedWallet: { id: number; wallet_address: string } | null = null;
+    if (walletIdStr || walletAddress) {
+      const walletId = walletIdStr ? parseInt(walletIdStr, 10) : null;
+      if (walletIdStr && isNaN(walletId as number)) {
+        throwHttp("bad_request", "Invalid walletId format", 400);
       }
+      const resolvedWallet = await requireOwnedWallet(req, dbUser, walletId, walletAddress);
+      ownedWallet = { id: resolvedWallet.id, wallet_address: resolvedWallet.wallet_address };
     }
 
-    const { data: wallets, error: walletsError } = await walletsQuery;
-    if (walletsError) {
-      throw new Error(`Failed to fetch wallets: ${walletsError.message}`);
+    let wallets: Array<{ id: number; wallet_address: string }> = [];
+
+    if (ownedWallet) {
+      wallets = [ownedWallet];
+    } else {
+      const { data: allWallets, error: walletsError } = await supabaseAdmin
+        .from('wallets')
+        .select('id, wallet_address')
+        .eq('user_id', dbUser.id);
+
+      if (walletsError) {
+        throwHttp("internal_error", "Failed to fetch wallets", 500);
+      }
+
+      wallets = allWallets || [];
     }
 
-    if (!wallets || wallets.length === 0) {
-      return NextResponse.json({
+    if (wallets.length === 0) {
+      return {
+        data: {
         pnl_usd: 0,
         pnl_percent: 0,
         current_balance_usd: 0,
-      });
+        },
+      };
     }
 
     const walletPnls = await Promise.all(
@@ -72,13 +71,6 @@ export async function GET(req: NextRequest) {
       current_balance_usd: aggregate.currentBalance,
     };
 
-    return NextResponse.json(pnlData);
-
-  } catch (error: any) {
-    console.error('Today\'s P&L API Error:', error);
-    return NextResponse.json({ 
-      error: 'Failed to fetch today\'s P&L data.',
-      details: error.message
-    }, { status: 500 });
-  }
+    return pnlData;
+  });
 } 

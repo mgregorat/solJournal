@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { Helius } from 'helius-sdk';
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 let helius: Helius | null = null;
 
@@ -19,20 +21,24 @@ function getHeliusClient() {
 }
 
 export async function GET(req: NextRequest) {
-    const { searchParams } = new URL(req.url);
-    const walletAddress = searchParams.get('walletAddress');
+    return withTiming(req, async () => {
+        const { searchParams } = new URL(req.url);
+        const walletIdParam = searchParams.get('walletId');
+        const walletAddress = searchParams.get('walletAddress');
+        const dbUser = await requireUser(req);
+        let walletId: number | null = null;
+        if (walletIdParam) {
+            walletId = parseInt(walletIdParam, 10);
+            if (isNaN(walletId)) {
+                throwHttp("bad_request", "Invalid walletId format", 400);
+            }
+        }
 
-    if (!walletAddress) {
-        return NextResponse.json({ error: 'Wallet address is required' }, { status: 400 });
-    }
+        const ownedWallet = await requireOwnedWallet(req, dbUser, walletId, walletAddress);
+        const resolvedWalletAddress = ownedWallet.wallet_address;
 
-    try {
         const heliusClient = getHeliusClient();
-        const response = await heliusClient.rpc.getAssetsByOwner({ ownerAddress: walletAddress, page: 1 });
-        return NextResponse.json(response);
-
-    } catch (error: any) {
-        console.error(`Error fetching token balances from Helius for ${walletAddress}:`, error);
-        return NextResponse.json({ error: 'Failed to fetch token balances.' }, { status: 500 });
-    }
-} 
+        const response = await heliusClient.rpc.getAssetsByOwner({ ownerAddress: resolvedWalletAddress, page: 1 });
+        return { provider: response };
+    });
+}

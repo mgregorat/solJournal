@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useWalletFilter } from "@/app/contexts/WalletFilterContext";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { usePrivy } from "@privy-io/react-auth";
 import { Wallet } from "@/lib/types";
 import { shortenAddress } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,9 +23,12 @@ import { Switch } from "@/components/ui/switch";
 import { useAppSettings } from "@/lib/hooks/useAppSettings";
 import { clearCache } from "@/lib/cache";
 import { LinkWalletModal } from "@/components/LinkWalletModal";
+import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
 import toast from "react-hot-toast";
 
 export function SettingsPage() {
+  const { getAccessToken } = usePrivy();
+  const getBearerToken = async () => (await getAccessToken?.()) || null;
   const { dbUserId, selectedWalletId, setSelectedWalletId, refreshWallets } = useWalletFilter();
   const { publicKey } = useWallet();
   const [wallets, setWallets] = useState<Wallet[]>([]);
@@ -75,11 +79,8 @@ export function SettingsPage() {
     if (!dbUserId) return;
     setIsLoadingWallets(true);
     try {
-      const response = await fetch(`/api/wallets?userId=${dbUserId}`);
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.error || "Failed to fetch wallets");
-      }
+      const response = await authedFetchClient(getBearerToken, "/api/wallets");
+      const data = await parseApiResponse<Wallet[]>(response);
       setWallets(data || []);
     } catch (error: any) {
       toast.error(error?.message || "Failed to load wallets");
@@ -190,18 +191,17 @@ export function SettingsPage() {
     const nextLabel = nicknameDraft.trim();
     setIsSavingNickname(true);
     try {
-      const response = await fetch("/api/wallets", {
+      const response = await authedFetchClient(getBearerToken, "/api/wallets", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: dbUserId,
           walletId: editingWallet.id,
           label: nextLabel,
         }),
       });
 
-      const data = await response.json().catch(() => ({}));
       if (response.ok) {
+        const data = await parseApiResponse<Wallet>(response);
         setLocalNickname(editingWallet.id, null);
         setWallets((prev) =>
           prev.map((wallet) =>
@@ -288,19 +288,14 @@ export function SettingsPage() {
 
     setIsRemovingWallet(true);
     try {
-      const response = await fetch("/api/wallets", {
+      const response = await authedFetchClient(getBearerToken, "/api/wallets", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: dbUserId,
           walletId: removingWallet.id,
         }),
       });
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data?.error || "Failed to remove wallet");
-      }
+      await parseApiResponse<{ success: boolean }>(response);
 
       const remainingWallets = wallets.filter((wallet) => wallet.id !== removingWallet.id);
       setWallets(remainingWallets);
@@ -351,18 +346,14 @@ export function SettingsPage() {
 
   const syncSingleWallet = async (wallet: Wallet) => {
     if (!dbUserId) return;
-    const response = await fetch("/api/journal/sync", {
+    const response = await authedFetchClient(getBearerToken, "/api/journal/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        userId: dbUserId,
         walletAddress: wallet.wallet_address,
       }),
     });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.error || `Failed to sync ${displayWalletName(wallet)}`);
-    }
+    const data = await parseApiResponse<{ last_synced_at?: string }>(response);
 
     const nextTimestamp = data?.last_synced_at || new Date().toISOString();
     localStorage.setItem(getLastSyncedStorageKey(wallet.id), nextTimestamp);
@@ -445,17 +436,13 @@ export function SettingsPage() {
 
     setIsExportingCsv(true);
     try {
-      let url = `/api/journal/entries?userId=${dbUserId}`;
+      let url = `/api/journal/entries`;
       if (selectedWalletId !== null) {
-        url += `&walletId=${selectedWalletId}`;
+        url += `?walletId=${selectedWalletId}`;
       }
 
-      const response = await fetch(url);
-      const data = await response.json().catch(() => []);
-      if (!response.ok) {
-        throw new Error(data?.error || "Failed to export journal entries.");
-      }
-
+      const response = await authedFetchClient(getBearerToken, url);
+      const data = await parseApiResponse<any[]>(response);
       const entries = Array.isArray(data) ? data : [];
       const headers = [
         "id",

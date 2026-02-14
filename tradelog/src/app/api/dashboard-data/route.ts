@@ -1,19 +1,20 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/app/lib/supabaseAdmin';
 import { getBrowser } from '@/lib/browser';
 import { fetchHoldings, fetchSOLBalance } from '@/lib/puppeteer-fetch';
 import { Trade } from '@/lib/types';
 import { Holding } from '@/lib/types';
+import { requireOwnedWallet, requireUser } from '@/app/lib/authorization';
+import { throwHttp, withTiming } from '@/app/lib/http';
 
 // Helper function to fetch watchlist details (adapted from the original watchlist route)
-async function getWatchlistDetails(userId: string) {
+async function getWatchlistDetails(userId: number) {
     const { data: watchlistItems, error } = await supabaseAdmin
         .from('watchlist')
         .select('token_address')
         .eq('user_id', userId);
 
     if (error) {
-        console.error("Error fetching watchlist items:", error);
         return []; // Return empty array on error
     }
 
@@ -63,62 +64,65 @@ async function getWatchlistDetails(userId: string) {
 }
 
 // Helper to get user's wallets
-async function getWallets(userId: string) {
+async function getWallets(userId: number) {
     const { data, error } = await supabaseAdmin
         .from('wallets')
         .select('*')
         .eq('user_id', userId);
     if (error) {
-        console.error("Error fetching wallets:", error);
         return [];
     }
     return data;
 }
 
 // Helper to get user's trades
-async function getTrades(userId: string, walletId?: number | null) {
+async function getTrades(userId: number, scopedWalletId?: number | null) {
     let query = supabaseAdmin
         .from('trades')
         .select('*')
         .eq('user_id', userId)
         .order('trade_date', { ascending: false });
     
-    if (walletId !== undefined && walletId !== null) {
-        query = query.eq('wallet_id', walletId);
+    if (scopedWalletId !== undefined && scopedWalletId !== null) {
+        query = query.eq('wallet_id', scopedWalletId);
     }
     
     const { data, error } = await query;
 
     if (error) {
-        console.error("Error fetching trades:", error);
         return [];
     }
     return data;
 }
 
 
-export async function GET(request: Request) {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('user_id');
-    const walletAddress = searchParams.get('walletAddress');
-    const walletIdStr = searchParams.get('walletId');
-
-    if (!userId) {
-        return NextResponse.json({ error: 'user_id is required' }, { status: 400 });
-    }
-
-    try {
-        const wallets = await getWallets(userId);
+export async function GET(request: NextRequest) {
+    return withTiming(request, async () => {
+        const { searchParams } = new URL(request.url);
+        const walletAddress = searchParams.get('walletAddress');
+        const walletIdStr = searchParams.get('walletId');
+        const dbUser = await requireUser(request);
         const parsedWalletId = walletIdStr ? parseInt(walletIdStr, 10) : null;
+        if (walletIdStr && isNaN(parsedWalletId as number)) {
+            throwHttp("bad_request", "Invalid walletId format", 400);
+        }
+
+        let ownedWallet: { id: number; wallet_address: string } | null = null;
+        if ((parsedWalletId !== null && !isNaN(parsedWalletId)) || walletAddress) {
+            const resolvedWallet = await requireOwnedWallet(
+                request,
+                dbUser,
+                parsedWalletId !== null && !isNaN(parsedWalletId) ? parsedWalletId : null,
+                walletAddress
+            );
+            ownedWallet = { id: resolvedWallet.id, wallet_address: resolvedWallet.wallet_address };
+        }
+
+        const wallets = await getWallets(dbUser.id);
 
         let targetWallets: any[] = [];
-        if (parsedWalletId !== null && !isNaN(parsedWalletId)) {
-            targetWallets = wallets.filter((w: any) => w.id === parsedWalletId);
-        } else if (walletAddress) {
-            targetWallets = wallets.filter((w: any) => w.wallet_address === walletAddress);
-            if (targetWallets.length === 0) {
-                targetWallets = [{ id: null, wallet_address: walletAddress }];
-            }
+        if (ownedWallet) {
+            targetWallets = [ownedWallet];
         } else {
             targetWallets = wallets;
         }
@@ -134,8 +138,8 @@ export async function GET(request: Request) {
         );
 
         const [watchlistResult, tradesResult] = await Promise.allSettled([
-            getWatchlistDetails(userId),
-            getTrades(userId, parsedWalletId !== null && !isNaN(parsedWalletId) ? parsedWalletId : null),
+            getWatchlistDetails(dbUser.id),
+            getTrades(dbUser.id, ownedWallet ? ownedWallet.id : null),
         ]);
 
         let enrichedHoldings: Holding[] = [];
@@ -143,7 +147,6 @@ export async function GET(request: Request) {
 
         for (const walletResult of holdingsByWallet) {
             if (walletResult.status !== 'fulfilled') {
-                console.error('Failed to fetch holdings for wallet:', walletResult.reason);
                 continue;
             }
 
@@ -237,15 +240,11 @@ export async function GET(request: Request) {
             enrichedHoldings.unshift(sol);
         }
         
-        return NextResponse.json({
+        return {
             holdings: enrichedHoldings,
             watchlist: watchlistResult.status === 'fulfilled' ? watchlistResult.value : [],
             wallets,
             trades: tradesResult.status === 'fulfilled' ? tradesResult.value : [],
-        });
-
-    } catch (error: any) {
-        console.error('Master Dashboard API Error:', error);
-        return NextResponse.json({ error: 'Failed to fetch dashboard data' }, { status: 500 });
-    }
+        };
+    });
 } 
