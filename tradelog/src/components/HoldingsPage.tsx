@@ -1,9 +1,7 @@
 "use client";
 import { useState, useMemo } from 'react';
-import { useWallet } from '@solana/wallet-adapter-react';
 import { ExternalLink, TrendingUp, TrendingDown, Grid3X3, List, RefreshCw, ArrowUp, ArrowDown, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
-import ConnectWalletPrompt from './ConnectWalletPrompt';
 import { PortfolioPieChart } from './PortfolioPieChart';
 import { toast } from 'sonner';
 
@@ -33,7 +31,6 @@ interface HoldingsPageProps {
 }
 
 export const HoldingsPage = ({ holdings, isLoading, onRefresh, walletAddress, canRefresh = true, solBalance = 0 }: HoldingsPageProps) => {
-  const { publicKey } = useWallet();
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sortBy, setSortBy] = useState<'value' | 'pnl' | 'symbol'>('value');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -89,8 +86,6 @@ export const HoldingsPage = ({ holdings, isLoading, onRefresh, walletAddress, ca
       toast.error(error?.message || 'Failed to refresh holdings');
     }
   };
-
-  if (!publicKey) return <ConnectWalletPrompt />;
 
   if (isLoading && holdings.length === 0) {
     return (

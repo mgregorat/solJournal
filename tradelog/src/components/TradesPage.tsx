@@ -1,178 +1,101 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import { User } from "@/lib/types";
 import { useWalletFilter } from "@/app/contexts/WalletFilterContext";
 import { shortenAddress } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { JournalEntryModal } from "@/components/JournalEntryModal";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { WalletSelector } from "@/components/WalletSelector";
-import { cachedFetch } from "@/lib/cachedFetch";
-import { invalidateCache } from "@/lib/cache";
-import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { createApiClient } from "@/lib/apiClient";
+import {
+  DEFAULT_TRADES_QUERY,
+  JournaledFilter,
+  TradeListItem,
+  TradeSortDirection,
+  TradeSortField,
+  TradeTypeFilter,
+  TradesPageData,
+  fetchTradesPage,
+} from "@/lib/tradesQuery";
+import { TradeTable } from "@/components/trades/TradeTable";
+import { TradeDrawer } from "@/components/trades/TradeDrawer";
+import { getCache, getCacheWithMeta, invalidateCache } from "@/lib/cache";
+import { FirstWalletEmptyState } from "@/components/FirstWalletEmptyState";
 
-type TradeRow = {
-  id: number;
-  wallet_id: number | null;
-  wallet_address: string;
-  token_symbol: string;
-  token_address: string;
-  trade_type: "buy" | "sell";
-  amount: number;
-  price: number;
-  total_value: number;
-  trade_date: string;
-  source: string;
-  transaction_hash: string;
-};
+type SortOptionValue =
+  | "trade_date_desc"
+  | "trade_date_asc"
+  | "total_value_usd_desc"
+  | "total_value_usd_asc"
+  | "realized_pnl_usd_desc"
+  | "realized_pnl_usd_asc";
 
-type JournalEntryRow = {
-  tx_hash: string;
-  is_journaled?: boolean | null;
-  is_flagged?: boolean | null;
-  notes?: string | null;
-  tags?: string[] | null;
-  what_went_well?: string | null;
-  what_went_wrong?: string | null;
-  what_will_i_do_differently?: string | null;
-};
+const SORT_OPTIONS: Array<{ value: SortOptionValue; label: string; sort: TradeSortField; dir: TradeSortDirection }> = [
+  { value: "trade_date_desc", label: "Newest", sort: "trade_date", dir: "desc" },
+  { value: "trade_date_asc", label: "Oldest", sort: "trade_date", dir: "asc" },
+  { value: "total_value_usd_desc", label: "Largest Value", sort: "total_value_usd", dir: "desc" },
+  { value: "total_value_usd_asc", label: "Smallest Value", sort: "total_value_usd", dir: "asc" },
+  { value: "realized_pnl_usd_desc", label: "Best PnL", sort: "realized_pnl_usd", dir: "desc" },
+  { value: "realized_pnl_usd_asc", label: "Worst PnL", sort: "realized_pnl_usd", dir: "asc" },
+];
 
-export const TradesPage = ({
-  dbUser,
-}: {
-  dbUser: User;
-}) => {
+function getSortOption(sort: TradeSortField, dir: TradeSortDirection): SortOptionValue {
+  const found = SORT_OPTIONS.find((option) => option.sort === sort && option.dir === dir);
+  return found ? found.value : "trade_date_desc";
+}
+
+export const TradesPage = ({ dbUser }: { dbUser: User }) => {
   const { getAccessToken } = usePrivy();
-  const getBearerToken = async () => (await getAccessToken?.()) || null;
+  const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
+  const api = useMemo(() => createApiClient({ getAccessToken: getBearerToken }), [getBearerToken]);
   const { selectedWalletId, selectedWallet, wallets, refreshWallets } = useWalletFilter();
-  const [trades, setTrades] = useState<TradeRow[]>([]);
-  const [journaledTxHashes, setJournaledTxHashes] = useState<Set<string>>(new Set());
-  const [journalEntriesByTx, setJournalEntriesByTx] = useState<Map<string, JournalEntryRow>>(new Map());
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshingData, setIsRefreshingData] = useState(false);
+
+  const [rows, setRows] = useState<TradeListItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const nextCursorRef = useRef<string | null>(null);
+  const requestSeqRef = useRef(0);
+  const requestAbortRef = useRef<AbortController | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingInitial, setIsLoadingInitial] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isJournalModalOpen, setIsJournalModalOpen] = useState(false);
-  const [selectedTradeForJournal, setSelectedTradeForJournal] = useState<TradeRow | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<TradeListItem | null>(null);
+  const [isUpdatingJournaled, setIsUpdatingJournaled] = useState(false);
 
-  const applyTradesPayload = useCallback((payload: { trades: TradeRow[]; entries: JournalEntryRow[] }) => {
-    const nextTrades = payload?.trades || [];
-    const entriesData = payload?.entries || [];
-    const curatedTxHashes = new Set(
-      entriesData
-        .filter((entry) => !!entry?.tx_hash && !!entry.is_journaled)
-        .map((entry) => entry.tx_hash)
-    );
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<TradeTypeFilter>(DEFAULT_TRADES_QUERY.type);
+  const [journaledFilter, setJournaledFilter] = useState<JournaledFilter>(DEFAULT_TRADES_QUERY.journaled);
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
+  const [sortField, setSortField] = useState<TradeSortField>(DEFAULT_TRADES_QUERY.sort);
+  const [sortDir, setSortDir] = useState<TradeSortDirection>(DEFAULT_TRADES_QUERY.dir);
 
-    setTrades(nextTrades);
-    setJournaledTxHashes(curatedTxHashes);
-    setJournalEntriesByTx(new Map(entriesData.map((entry) => [entry.tx_hash, entry])));
+  const abortActiveRequest = useCallback(() => {
+    const controller = requestAbortRef.current;
+    if (!controller || controller.signal.aborted) return;
+    try {
+      controller.abort(new DOMException("Trades request cancelled", "AbortError"));
+    } catch {
+      try {
+        controller.abort();
+      } catch {
+        // no-op
+      }
+    }
   }, []);
 
-  const fetchTrades = useCallback(async () => {
-    if (!dbUser?.id) {
-      setIsLoading(false);
-      return;
-    }
-
-    setIsRefreshingData(true);
-    if (trades.length === 0) {
-      setIsLoading(true);
-    }
-    setError(null);
-    try {
-      const walletScope = selectedWalletId ?? "all";
-      const payload = await cachedFetch<{ trades: TradeRow[]; entries: JournalEntryRow[] }>({
-        key: `trades:${dbUser.id}:${walletScope}`,
-        fetcher: async () => {
-          let tradesUrl = `/api/trades`;
-          let entriesUrl = `/api/journal/entries`;
-          if (selectedWalletId !== null) {
-            tradesUrl += `?walletId=${selectedWalletId}`;
-            entriesUrl += `?walletId=${selectedWalletId}`;
-          }
-
-          const [tradesResponse, entriesResponse] = await Promise.all([
-            authedFetchClient(getBearerToken, tradesUrl),
-            authedFetchClient(getBearerToken, entriesUrl),
-          ]);
-
-          const tradesData = await parseApiResponse<TradeRow[]>(tradesResponse);
-
-          let entriesData: JournalEntryRow[] = [];
-          if (entriesResponse.ok) {
-            entriesData = await parseApiResponse<JournalEntryRow[]>(entriesResponse);
-          }
-
-          return {
-            trades: tradesData || [],
-            entries: entriesData || [],
-          };
-        },
-        onUpdate: applyTradesPayload,
-      });
-
-      applyTradesPayload(payload);
-    } catch (err: any) {
-      setError(err.message || "Failed to fetch trades");
-    } finally {
-      setIsLoading(false);
-      setIsRefreshingData(false);
-    }
-  }, [dbUser?.id, selectedWalletId, applyTradesPayload, trades.length]);
-
   useEffect(() => {
-    fetchTrades();
-  }, [fetchTrades]);
-
-  const handleSyncTrades = async () => {
-    if (!dbUser?.id) return;
-    if (wallets.length === 0) {
-      setError("No wallets available to sync.");
-      return;
-    }
-
-    setIsSyncing(true);
-    setError(null);
-    try {
-      const targetWallets =
-        selectedWalletId === null
-          ? wallets
-          : wallets.filter((wallet) => wallet.id === selectedWalletId || wallet.wallet_address === selectedWallet?.wallet_address);
-
-      await Promise.all(
-        targetWallets.map(async (wallet) => {
-          const response = await authedFetchClient(getBearerToken, "/api/journal/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              walletAddress: wallet.wallet_address,
-            }),
-          });
-          const data = await parseApiResponse(response);
-          return data;
-        })
-      );
-
-      await refreshWallets();
-      invalidateCache(`trades:${dbUser.id}:`);
-      await fetchTrades();
-    } catch (err: any) {
-      setError(err.message || "Failed to sync trades");
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+    const timeout = setTimeout(() => {
+      setDebouncedSearch(searchInput.trim());
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [searchInput]);
 
   const walletLabelById = useMemo(() => {
     const map = new Map<number, string>();
@@ -183,59 +106,228 @@ export const TradesPage = ({
     return map;
   }, [wallets]);
 
-  const lastSyncedText = useMemo(() => {
-    const toRelative = (iso: string) => {
-      const timestamp = new Date(iso).getTime();
-      if (!Number.isFinite(timestamp)) return "unknown";
-      const diffMs = Date.now() - timestamp;
-      if (diffMs < 60_000) return "just now";
-      const minutes = Math.floor(diffMs / 60_000);
-      if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-      const hours = Math.floor(minutes / 60);
-      if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-      const days = Math.floor(hours / 24);
-      return `${days} day${days === 1 ? "" : "s"} ago`;
-    };
+  const showWalletColumn = selectedWalletId === null;
+  const walletScope = selectedWalletId ?? "all";
+  const isDefaultQuery =
+    !debouncedSearch &&
+    typeFilter === DEFAULT_TRADES_QUERY.type &&
+    journaledFilter === DEFAULT_TRADES_QUERY.journaled &&
+    !dateFrom &&
+    !dateTo &&
+    sortField === DEFAULT_TRADES_QUERY.sort &&
+    sortDir === DEFAULT_TRADES_QUERY.dir;
 
-    if (wallets.length === 0) return null;
+  const queryBase = useMemo(
+    () => ({
+      walletId: selectedWalletId,
+      walletAddress: selectedWalletId === null ? null : selectedWallet?.wallet_address || null,
+      q: debouncedSearch || undefined,
+      type: typeFilter,
+      journaled: journaledFilter,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      sort: sortField,
+      dir: sortDir,
+      limit: 50,
+    }),
+    [selectedWalletId, selectedWallet?.wallet_address, debouncedSearch, typeFilter, journaledFilter, dateFrom, dateTo, sortField, sortDir]
+  );
 
-    if (selectedWalletId !== null) {
-      const selected = wallets.find((wallet) => wallet.id === selectedWalletId);
-      if (!selected?.last_synced_at) return "Last synced: never";
-      return `Last synced: ${toRelative(selected.last_synced_at)}`;
+  const loadTrades = useCallback(
+    async (mode: "reset" | "more", cursorOverride?: string | null) => {
+      if (!wallets.length) {
+        setRows([]);
+        setHasMore(false);
+        setNextCursor(null);
+        setError(null);
+        setIsLoadingInitial(false);
+        setIsLoadingMore(false);
+        return;
+      }
+
+      const controller = new AbortController();
+      abortActiveRequest();
+      requestAbortRef.current = controller;
+      const requestSeq = ++requestSeqRef.current;
+
+      try {
+        setError(null);
+        if (mode === "reset") {
+          setIsLoadingInitial(true);
+        } else {
+          setIsLoadingMore(true);
+        }
+
+        const payload: TradesPageData = await fetchTradesPage(getBearerToken, {
+          ...queryBase,
+          cursor: mode === "more" ? cursorOverride ?? nextCursorRef.current : null,
+        }, { signal: controller.signal });
+
+        if (requestSeq !== requestSeqRef.current) {
+          return;
+        }
+
+        setRows((prev) => (mode === "reset" ? payload.items : [...prev, ...payload.items]));
+        setNextCursor(payload.nextCursor);
+        nextCursorRef.current = payload.nextCursor;
+        setHasMore(payload.hasMore);
+      } catch (err: unknown) {
+        if (
+          (err instanceof DOMException && err.name === "AbortError") ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          return;
+        }
+        if (requestSeq !== requestSeqRef.current) {
+          return;
+        }
+        setError(err instanceof Error ? err.message : "Failed to load trades");
+      } finally {
+        if (requestSeq !== requestSeqRef.current) {
+          return;
+        }
+        setIsLoadingInitial(false);
+        setIsLoadingMore(false);
+      }
+    },
+    [abortActiveRequest, getBearerToken, queryBase, wallets.length]
+  );
+
+  useEffect(() => {
+    nextCursorRef.current = null;
+    if (isDefaultQuery) {
+      const listCacheKey = `trades-list:${dbUser.id}:${walletScope}`;
+      const cachedList = getCache<TradeListItem[]>(listCacheKey);
+      if (Array.isArray(cachedList) && cachedList.length > 0) {
+        setRows(cachedList);
+        setHasMore(false);
+        setNextCursor(null);
+        setIsLoadingInitial(false);
+        setError(null);
+        return;
+      }
+      const staleList = getCacheWithMeta<TradeListItem[]>(listCacheKey);
+      if (Array.isArray(staleList?.data) && staleList.data.length > 0) {
+        setRows(staleList.data);
+        setHasMore(false);
+        setNextCursor(null);
+        setIsLoadingInitial(false);
+        setError(null);
+        return;
+      }
+
+      const bundleCacheKey = `trades:${dbUser.id}:${walletScope}`;
+      const cachedBundle = getCache<{ trades?: TradeListItem[] }>(bundleCacheKey);
+      if (Array.isArray(cachedBundle?.trades) && cachedBundle.trades.length > 0) {
+        setRows(cachedBundle.trades);
+        setHasMore(false);
+        setNextCursor(null);
+        setIsLoadingInitial(false);
+        setError(null);
+        return;
+      }
+      const staleBundle = getCacheWithMeta<{ trades?: TradeListItem[] }>(bundleCacheKey);
+      if (Array.isArray(staleBundle?.data?.trades) && staleBundle.data.trades.length > 0) {
+        setRows(staleBundle.data.trades);
+        setHasMore(false);
+        setNextCursor(null);
+        setIsLoadingInitial(false);
+        setError(null);
+        return;
+      }
     }
 
-    const latest = wallets
-      .map((wallet) => wallet.last_synced_at)
-      .filter((value): value is string => !!value)
-      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+    void loadTrades("reset");
+  }, [dbUser.id, isDefaultQuery, loadTrades, queryBase, walletScope]);
 
-    if (!latest) return "Last synced: never";
-    return `Last synced: ${toRelative(latest)} (latest wallet)`;
-  }, [wallets, selectedWalletId]);
+  useEffect(() => {
+    return () => {
+      abortActiveRequest();
+    };
+  }, [abortActiveRequest]);
 
-  const showWalletColumn = selectedWalletId === null;
+  const handleLoadMore = useCallback(() => {
+    if (!hasMore || isLoadingMore || !nextCursorRef.current) return;
+    void loadTrades("more", nextCursorRef.current);
+  }, [hasMore, isLoadingMore, loadTrades]);
 
-  const handleAddToJournal = (trade: TradeRow) => {
-    if (!trade.transaction_hash) return;
-    if (!trade.wallet_id) {
-      setError("Cannot journal this trade because wallet_id is missing.");
+  const handleSyncTrades = useCallback(async () => {
+    if (!wallets.length) {
+      setError("No wallets available to sync.");
       return;
     }
 
+    setIsSyncing(true);
     setError(null);
-    // Immediate local UI state only. No network work here.
-    setSelectedTradeForJournal(trade);
-    setIsJournalModalOpen(true);
+    try {
+      const targetWallets =
+        selectedWalletId === null
+          ? wallets
+          : wallets.filter((wallet) => wallet.id === selectedWalletId);
+
+      await Promise.all(
+        targetWallets.map((wallet) =>
+          api.post("/api/journal/sync", {
+            walletAddress: wallet.wallet_address,
+          })
+        )
+      );
+      await refreshWallets();
+      invalidateCache(`trades:${dbUser.id}:`);
+      invalidateCache(`trades-list:${dbUser.id}:`);
+      setNextCursor(null);
+      nextCursorRef.current = null;
+      await loadTrades("reset");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to sync trades");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [api, dbUser.id, loadTrades, refreshWallets, selectedWalletId, wallets]);
+
+  const handleSortChange = (value: SortOptionValue) => {
+    const selected = SORT_OPTIONS.find((option) => option.value === value);
+    if (!selected) return;
+    setSortField(selected.sort);
+    setSortDir(selected.dir);
   };
+
+  const handleToggleJournaled = useCallback(
+    async (trade: TradeListItem) => {
+      if (!trade.wallet_id) return;
+      setIsUpdatingJournaled(true);
+      try {
+        await api.patch("/api/journal/flag", {
+          tx_hash: trade.transaction_hash,
+          walletId: trade.wallet_id,
+          is_journaled: !trade.is_journaled,
+        });
+        setRows((prev) =>
+          prev.map((row) =>
+            row.transaction_hash === trade.transaction_hash
+              ? { ...row, is_journaled: !row.is_journaled }
+              : row
+          )
+        );
+        setSelectedTrade((prev) =>
+          prev && prev.transaction_hash === trade.transaction_hash
+            ? { ...prev, is_journaled: !prev.is_journaled }
+            : prev
+        );
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to update journal status");
+      } finally {
+        setIsUpdatingJournaled(false);
+      }
+    },
+    [api]
+  );
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-3xl font-bold text-white">Trades</h1>
         <div className="flex items-center gap-3">
-          {isRefreshingData && <span className="text-xs text-muted-foreground">Refreshing...</span>}
-          {lastSyncedText && <span className="text-xs text-muted-foreground">{lastSyncedText}</span>}
           <Button variant="outline" size="sm" onClick={handleSyncTrades} disabled={isSyncing}>
             {isSyncing ? "Syncing..." : "Sync"}
           </Button>
@@ -243,114 +335,95 @@ export const TradesPage = ({
         </div>
       </div>
 
+      {wallets.length === 0 && (
+        <FirstWalletEmptyState />
+      )}
+
+      {wallets.length > 0 && (
+      <Card>
+        <CardHeader>
+          <CardTitle>Filters</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
+          <Input
+            placeholder="Search token"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            className="lg:col-span-2"
+          />
+
+          <Select value={typeFilter} onValueChange={(value) => setTypeFilter(value as TradeTypeFilter)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="buy">Buy</SelectItem>
+              <SelectItem value="sell">Sell</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={journaledFilter} onValueChange={(value) => setJournaledFilter(value as JournaledFilter)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Journaled" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="journaled">Journaled</SelectItem>
+              <SelectItem value="unjournaled">Unjournaled</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
+          <Input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+
+          <Select value={getSortOption(sortField, sortDir)} onValueChange={(value) => handleSortChange(value as SortOptionValue)}>
+            <SelectTrigger className="lg:col-span-2">
+              <SelectValue placeholder="Sort" />
+            </SelectTrigger>
+            <SelectContent>
+              {SORT_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CardContent>
+      </Card>
+      )}
+
+      {wallets.length > 0 && (
       <Card>
         <CardHeader>
           <CardTitle>Trade History</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading trades...</p>
-          ) : error ? (
-            <p className="text-sm text-red-400">{error}</p>
-          ) : trades.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No trades found for this wallet.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Type</TableHead>
-                    {showWalletColumn && <TableHead>Wallet</TableHead>}
-                    <TableHead>Token</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Price</TableHead>
-                    <TableHead>Total Value</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {trades.map((trade) => (
-                    <TableRow key={trade.id}>
-                      <TableCell>{new Date(trade.trade_date).toLocaleString()}</TableCell>
-                      <TableCell className={trade.trade_type === "buy" ? "text-green-400 capitalize" : "text-red-400 capitalize"}>
-                        {trade.trade_type}
-                      </TableCell>
-                      {showWalletColumn && (
-                        <TableCell>
-                          {trade.wallet_id && walletLabelById.get(trade.wallet_id)
-                            ? walletLabelById.get(trade.wallet_id)
-                            : trade.wallet_address}
-                        </TableCell>
-                      )}
-                      <TableCell>{trade.token_symbol}</TableCell>
-                      <TableCell>{Number(trade.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}</TableCell>
-                      <TableCell>${Number(trade.price || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}</TableCell>
-                      <TableCell>${Number(trade.total_value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                      <TableCell>
-                        <span
-                          title="Journaling helps you review and improve your trading decisions."
-                          className="inline-block"
-                        >
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={journaledTxHashes.has(trade.transaction_hash) || !trade.wallet_id}
-                            onClick={() => handleAddToJournal(trade)}
-                          >
-                            {journaledTxHashes.has(trade.transaction_hash)
-                              ? "Journaled"
-                              : "Add to Journal"}
-                          </Button>
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
+          <TradeTable
+            rows={rows}
+            showWalletColumn={showWalletColumn}
+            walletLabelById={walletLabelById}
+            onRowClick={setSelectedTrade}
+            isLoading={isLoadingInitial}
+            isError={Boolean(error)}
+            errorMessage={error}
+            hasMore={hasMore}
+            isLoadingMore={isLoadingMore}
+            onLoadMore={handleLoadMore}
+          />
         </CardContent>
       </Card>
-
-      {selectedTradeForJournal && selectedTradeForJournal.wallet_id && selectedTradeForJournal.transaction_hash && (
-        <JournalEntryModal
-          open={isJournalModalOpen}
-          onOpenChange={(open) => {
-            setIsJournalModalOpen(open);
-            if (!open) {
-              setSelectedTradeForJournal(null);
-            }
-          }}
-          userId={dbUser.id}
-          walletId={selectedTradeForJournal.wallet_id}
-          tx_hash={selectedTradeForJournal.transaction_hash}
-          initialValues={{
-            notes: journalEntriesByTx.get(selectedTradeForJournal.transaction_hash)?.notes || "",
-            tags: journalEntriesByTx.get(selectedTradeForJournal.transaction_hash)?.tags || [],
-            what_went_well: journalEntriesByTx.get(selectedTradeForJournal.transaction_hash)?.what_went_well || "",
-            what_went_wrong: journalEntriesByTx.get(selectedTradeForJournal.transaction_hash)?.what_went_wrong || "",
-            what_will_i_do_differently: journalEntriesByTx.get(selectedTradeForJournal.transaction_hash)?.what_will_i_do_differently || "",
-            is_flagged: journalEntriesByTx.get(selectedTradeForJournal.transaction_hash)?.is_flagged || false,
-          }}
-          tokenSymbol={selectedTradeForJournal.token_symbol}
-          tradeDate={selectedTradeForJournal.trade_date}
-          onSaved={(savedJournalEntry) => {
-            setJournaledTxHashes((prev) => {
-              const next = new Set(prev);
-              next.add(selectedTradeForJournal.transaction_hash);
-              return next;
-            });
-            setJournalEntriesByTx((prev) => {
-              const next = new Map(prev);
-              next.set(selectedTradeForJournal.transaction_hash, savedJournalEntry);
-              return next;
-            });
-            setIsJournalModalOpen(false);
-            setSelectedTradeForJournal(null);
-          }}
-        />
       )}
+
+      <TradeDrawer
+        open={Boolean(selectedTrade)}
+        trade={selectedTrade}
+        onOpenChange={(open) => {
+          if (!open) setSelectedTrade(null);
+        }}
+        onToggleJournaled={handleToggleJournaled}
+        isUpdatingJournaled={isUpdatingJournaled}
+      />
     </div>
   );
 };

@@ -168,7 +168,6 @@ export async function POST(request: NextRequest) {
       if (recordsToInsert.length === 0) {
         return { message: 'No valid trades found to sync.', synced: 0 };
       }
-
       const { data, error } = await supabaseAdmin
         .from('trades')
         .upsert(recordsToInsert, { onConflict: 'transaction_hash', ignoreDuplicates: true })

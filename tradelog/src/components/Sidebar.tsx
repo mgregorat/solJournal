@@ -5,24 +5,11 @@ import {
   BookOpen,
   Settings,
   CandlestickChart,
-  LogOut,
   Coins,
   Star,
-  TrendingUp,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "@/lib/utils";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { useState } from "react";
-import { WalletConnectButton } from "./WalletConnectButton";
 import { ThemeToggle } from "./ThemeToggle"; // Import the new component
 
 const Logo = () => (
@@ -60,7 +47,6 @@ const UserProfile = () => {
   return (
     <div className="mt-auto p-4 flex flex-col items-center gap-4">
       <ThemeToggle />
-      <WalletConnectButton />
     </div>
   );
 };

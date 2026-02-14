@@ -4,6 +4,7 @@ import React, { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { WalletAdapterNetwork } from "@solana/wallet-adapter-base";
+import { PhantomWalletAdapter } from "@solana/wallet-adapter-phantom";
 import { WalletNotification } from '@/components/WalletNotification';
 import { UnifiedWalletProvider } from "@jup-ag/wallet-adapter";
 import dynamic from 'next/dynamic';
@@ -17,10 +18,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const endpoint = useMemo(() => `https://mainnet.helius-rpc.com/?api-key=${process.env.NEXT_PUBLIC_HELIUS_API_KEY}`, []);
   
   const wallets = useMemo(() => [
+    new PhantomWalletAdapter(),
   ], []);
 
   const config = {
-    autoConnect: true,
+    autoConnect: false,
     env: WalletAdapterNetwork.Mainnet,
     metadata: {
       name: "Tradelog",
@@ -39,7 +41,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
+      <WalletProvider wallets={wallets} autoConnect={false}>
         <WalletModalProvider>
           <UnifiedWalletProvider wallets={wallets} config={config}>
             <PrivyProvider>

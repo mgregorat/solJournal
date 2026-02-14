@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
+import { WalletName } from "@solana/wallet-adapter-base";
 import { usePrivy } from "@privy-io/react-auth";
 import bs58 from "bs58";
 import toast from "react-hot-toast";
@@ -41,7 +42,7 @@ async function parseJsonSafe(res: Response) {
 
 export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModalProps) {
   const { wallets, dbUserId } = useWalletFilter();
-  const { publicKey, connected, signMessage } = useWallet();
+  const { publicKey, connected, connecting, signMessage, wallets: availableWallets, wallet, select, connect } = useWallet();
   const { setVisible } = useWalletModal();
   const { login, getAccessToken } = usePrivy();
   const getBearerToken = async () => (await getAccessToken?.()) || null;
@@ -180,6 +181,34 @@ export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModa
     }
   };
 
+  const handleConnectPhantom = async () => {
+    try {
+      const phantom = availableWallets.find((w) =>
+        w.adapter?.name?.toLowerCase().includes("phantom")
+      );
+
+      if (!phantom) {
+        toast.error("Phantom wallet adapter is unavailable.");
+        setVisible(true);
+        return;
+      }
+
+      if (!wallet || wallet.adapter.name !== phantom.adapter.name) {
+        select(phantom.adapter.name as WalletName);
+      }
+
+      await connect();
+    } catch (error: any) {
+      const message = String(error?.message || "");
+      if (message.toLowerCase().includes("rejected")) {
+        toast.error("Connection request was rejected.");
+      } else {
+        toast.error("Failed to connect Phantom. Try again.");
+      }
+      setVisible(true);
+    }
+  };
+
   return (
     <>
       <Dialog open={open} onOpenChange={(next) => !isLinking && onOpenChange(next)}>
@@ -193,8 +222,8 @@ export function LinkWalletModal({ open, onOpenChange, onLinked }: LinkWalletModa
               <p className="text-sm text-muted-foreground">
                 Connect Phantom to start secure wallet linking.
               </p>
-              <Button onClick={() => setVisible(true)} disabled={isLinking}>
-                Connect Phantom
+              <Button onClick={handleConnectPhantom} disabled={isLinking || connecting}>
+                {connecting ? "Connecting..." : "Connect Phantom"}
               </Button>
             </div>
           ) : (

@@ -18,7 +18,6 @@ import { Star, ChevronLeft, ChevronRight, Eye, RefreshCw, ChevronDown, ChevronUp
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, addMonths, subMonths, isSameDay } from 'date-fns';
 import { JournalEvent, JournalPageProps, User } from '@/lib/types';
 import { usePrivy } from '@privy-io/react-auth';
-import { useWallet } from '@solana/wallet-adapter-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useWalletFilter } from '@/app/contexts/WalletFilterContext';
@@ -434,7 +433,6 @@ export const JournalPage = ({
   const [dbUser, setDbUser] = useState<User | undefined>(propDbUser);
   const { user: privyUser, authenticated, getAccessToken } = usePrivy();
   const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
-  const { publicKey } = useWallet();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -539,15 +537,10 @@ export const JournalPage = ({
   }, []);
 
   const fetchAndMergeData = useCallback(async () => {
-    if (!publicKey) {
-      return;
-    }
-
     try {
       setIsRefreshingData(true);
       const userId = dbUser?.id;
       if (!userId) {
-          console.log("User not available yet, skipping data fetch.");
           return;
       }
 
@@ -613,7 +606,7 @@ export const JournalPage = ({
     } finally {
       setIsRefreshingData(false);
     }
-  }, [dbUser, publicKey, selectedWalletId, applyMergedEvents, getBearerToken]);
+  }, [dbUser, selectedWalletId, applyMergedEvents, getBearerToken]);
 
   useEffect(() => {
     if (dbUser) { // Run only when dbUser is available
@@ -622,14 +615,14 @@ export const JournalPage = ({
   }, [fetchAndMergeData, dbUser]);
 
   const handleManualSync = async () => {
-    if (!dbUser || !publicKey) return;
+    if (!dbUser || !selectedWallet?.wallet_address) return;
     setIsSyncing(true);
     const toastId = toast.loading("Syncing trades from GMGN...");
     try {
         const response = await authedFetchClient(getBearerToken, '/api/journal/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ walletAddress: selectedWallet?.wallet_address || publicKey.toBase58(), force: true }),
+            body: JSON.stringify({ walletAddress: selectedWallet.wallet_address, force: true }),
         });
         if (response.ok) {
             const data = await parseApiResponse<any>(response);

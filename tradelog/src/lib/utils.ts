@@ -7,8 +7,10 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function isTradeJournaled(trade: Partial<JournalEvent>): boolean {
-  // A trade is considered journaled if it has notes or any reflection content.
-  // The presence of a flag alone does not count.
+  // Prefer explicit persisted journal flag when present.
+  if (trade.is_journaled) return true;
+
+  // Backward-compat fallback for legacy rows without explicit flag.
   return (
     !!trade.notes ||
     !!trade.what_went_well ||

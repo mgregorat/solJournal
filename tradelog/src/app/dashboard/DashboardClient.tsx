@@ -1,6 +1,5 @@
 "use client";
 
-import { useWallet } from "@solana/wallet-adapter-react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { usePrivy } from "@privy-io/react-auth";
 import Sidebar from "@/components/Sidebar";
@@ -12,6 +11,7 @@ import { WatchlistPage } from "@/components/WatchlistPage";
 import { TradesPage } from "@/components/TradesPage";
 import { SettingsPage } from "@/components/SettingsPage";
 import { LoadingScreen } from "@/components/LoadingScreen";
+import { FirstWalletEmptyState } from "@/components/FirstWalletEmptyState";
 import { Trade, Holding, User } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -24,15 +24,11 @@ import { authedFetchClient, parseApiResponse } from "@/lib/authedFetch";
 
 function DashboardContent({
   dbUser,
-  publicKey,
-  connected,
   propInitialTrades,
   propInitialHoldings,
   initialActiveItem = "Dashboard",
 }: {
   dbUser: User;
-  publicKey: any;
-  connected: boolean;
   propInitialTrades: any;
   propInitialHoldings: any;
   initialActiveItem?: string;
@@ -55,7 +51,7 @@ function DashboardContent({
   const [activeItem, setActiveItem] = useState(initialActiveItem);
   const [pendingJournalTxHash, setPendingJournalTxHash] = useState<string | null>(null);
   const [hasInitializedDashboard, setHasInitializedDashboard] = useState(false);
-  const resolvedWalletAddress = selectedWallet?.wallet_address ?? (publicKey ? publicKey.toBase58() : null);
+  const resolvedWalletAddress = selectedWallet?.wallet_address ?? null;
   const isDashboardDataReady = !isLoading && !walletFilterLoading && hasResolvedHoldings;
   const walletScope = selectedWalletId ?? "all";
   const { settings } = useAppSettings(dbUser?.id);
@@ -63,6 +59,7 @@ function DashboardContent({
   const autoSyncLastRunRef = useRef<Map<string, number>>(new Map());
   const { ready, authenticated, getAccessToken } = usePrivy();
   const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
+  const hasWallets = (filterWallets?.length || 0) > 0;
 
   const applyHoldingsPayload = useCallback((data: any) => {
     const sourceHoldings =
@@ -186,6 +183,21 @@ function DashboardContent({
     setJournalEvents(journalData || []);
   }, []);
 
+  const normalizeTradesPayload = useCallback((payload: unknown): Trade[] => {
+    if (Array.isArray(payload)) {
+      return payload as Trade[];
+    }
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "items" in payload &&
+      Array.isArray((payload as { items: unknown[] }).items)
+    ) {
+      return (payload as { items: Trade[] }).items;
+    }
+    return [];
+  }, []);
+
   const syncStatusStorageKey = useMemo(
     () => (dbUser?.id ? `tradelog:syncState:${dbUser.id}` : null),
     [dbUser?.id]
@@ -211,7 +223,7 @@ function DashboardContent({
         setIsLoading(false);
         return;
       }
-      if (!connected || !publicKey || !dbUser) {
+      if (!dbUser) {
         setIsLoading(false);
         return;
       }
@@ -225,13 +237,12 @@ function DashboardContent({
       try {
         let dashboardUrl = `/api/dashboard-data`;
         let journalUrl = `/api/journal-activity`;
+        let tradesUrl = `/api/trades`;
 
         if (selectedWalletId !== null) {
           dashboardUrl += `?walletId=${selectedWalletId}`;
           journalUrl += `?walletId=${selectedWalletId}`;
-        } else if ((filterWallets?.length || 0) === 0) {
-          // If wallets haven't been created in DB yet, bootstrap with connected wallet.
-          dashboardUrl += `?walletAddress=${publicKey.toBase58()}`;
+          tradesUrl += `?walletId=${selectedWalletId}`;
         }
 
         const [dashboardData, journalData] = await Promise.all([
@@ -253,6 +264,14 @@ function DashboardContent({
             },
             onUpdate: applyJournalPayload,
           }),
+          cachedFetch({
+            revalidateOnHit: false,
+            key: `trades-list:${dbUser.id}:${walletScope}`,
+            fetcher: async () => {
+              const res = await authedFetchClient(getBearerToken, tradesUrl);
+              return normalizeTradesPayload(await parseApiResponse(res));
+            },
+          }),
         ]);
 
         applyDashboardPayload(dashboardData);
@@ -271,8 +290,6 @@ function DashboardContent({
   }, [
     ready,
     authenticated,
-    connected,
-    publicKey,
     dbUser,
     selectedWalletId,
     selectedWallet,
@@ -284,6 +301,24 @@ function DashboardContent({
     getBearerToken,
     hasInitializedDashboard,
   ]);
+
+  useEffect(() => {
+    const openManageWallets = () => setActiveItem("Settings");
+    const storageSelection =
+      typeof window !== "undefined" ? localStorage.getItem("tradelog:dashboardActiveItem") : null;
+    if (storageSelection === "Settings") {
+      setActiveItem("Settings");
+      localStorage.removeItem("tradelog:dashboardActiveItem");
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("tradelog:open-manage-wallets", openManageWallets);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("tradelog:open-manage-wallets", openManageWallets);
+      }
+    };
+  }, []);
 
 
   const handleRefreshHoldings = useCallback(async () => {
@@ -399,7 +434,7 @@ function DashboardContent({
         key: `trades-list:${userId}:${walletKey}`,
         fetcher: async () => {
           const res = await authedFetchClient(getBearerToken, tradesUrl);
-          return parseApiResponse(res);
+          return normalizeTradesPayload(await parseApiResponse(res));
         },
       }),
       cachedFetch({
@@ -420,7 +455,7 @@ function DashboardContent({
             authedFetchClient(getBearerToken, tradesUrl),
             fetchJournalEntries(),
           ]);
-          const tradesData = await parseApiResponse(tradesRes);
+          const tradesData = normalizeTradesPayload(await parseApiResponse(tradesRes));
           return {
             trades: tradesData || [],
             entries: Array.isArray(entriesRes) ? entriesRes : [],
@@ -504,6 +539,7 @@ function DashboardContent({
     filterWallets?.length,
     resolvedWalletAddress,
     getBearerToken,
+    normalizeTradesPayload,
   ]);
 
   useEffect(() => {
@@ -595,10 +631,6 @@ function DashboardContent({
     if (isLoading) {
       return <LoadingScreen />;
     }
-    
-    if (!connected || !publicKey) {
-      return <WalletConnection />;
-    }
    
     switch (activeItem) {
       case "Journal":
@@ -628,6 +660,19 @@ function DashboardContent({
         return <SettingsPage />;
       case "Dashboard":
       default:
+        if (!hasWallets) {
+          return (
+            <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold text-white">Trading Dashboard</h1>
+                <div className="flex items-center gap-4">
+                  <WalletSelector dbUser={dbUser} />
+                </div>
+              </div>
+              <FirstWalletEmptyState />
+            </div>
+          );
+        }
         return (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -658,7 +703,7 @@ function DashboardContent({
   
   return (
     <div className="flex">
-      <Sidebar activeItem={activeItem} onItemClick={setActiveItem} dbUser={dbUser} />
+      <Sidebar activeItem={activeItem} onItemClick={setActiveItem} />
       <main className="flex-1 ml-24 p-8">{renderMainContent()}</main>
     </div>
   );
@@ -669,15 +714,18 @@ export function DashboardClient({
   initialHoldings: propInitialHoldings,
   initialActiveItem = "Dashboard",
 }: any) {
-  const { publicKey, connected } = useWallet();
-  const { getAccessToken } = usePrivy();
+  const { ready, authenticated, getAccessToken } = usePrivy();
   const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
   const [dbUser, setDbUser] = useState<User | null>(null);
   const [isUserLoading, setIsUserLoading] = useState(true);
 
   useEffect(() => {
     const fetchUser = async () => {
-      if (!connected || !publicKey) {
+      if (!ready) {
+        return;
+      }
+
+      if (!authenticated) {
         setDbUser(null);
         setIsUserLoading(false);
         return;
@@ -699,26 +747,28 @@ export function DashboardClient({
     };
 
     fetchUser();
-  }, [connected, publicKey, getBearerToken]);
+  }, [ready, authenticated, getBearerToken]);
 
-  if (!connected || !publicKey) {
+  if (!ready) {
+    return <LoadingScreen />;
+  }
+
+  if (!authenticated) {
     return <WalletConnection />;
   }
 
   if (isUserLoading) {
-    return <LoadingScreen message="Syncing user..." />;
+    return <LoadingScreen />;
   }
 
   if (!dbUser) {
-    return <LoadingScreen message="Syncing user..." />;
+    return <LoadingScreen />;
   }
 
   return (
     <WalletFilterProvider dbUser={dbUser}>
       <DashboardContent
         dbUser={dbUser}
-        publicKey={publicKey}
-        connected={connected}
         propInitialTrades={propInitialTrades}
         propInitialHoldings={propInitialHoldings}
         initialActiveItem={initialActiveItem}
