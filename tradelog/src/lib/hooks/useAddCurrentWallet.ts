@@ -9,6 +9,12 @@ import { authedFetchClient } from "@/lib/authedFetch";
 import bs58 from "bs58";
 import toast from "react-hot-toast";
 
+type MaybeSignMessageAdapter = {
+  publicKey?: { toBase58: () => string } | null;
+  signMessage?: ((message: Uint8Array) => Promise<Uint8Array>) | undefined;
+  name: string;
+};
+
 type VerifyWallet = {
   id: number;
   wallet_address: string;
@@ -131,9 +137,10 @@ export function useAddCurrentWallet() {
     walletAddress: string | null;
     signMessageFn: ((message: Uint8Array) => Promise<Uint8Array>) | null;
   }> => {
+    const currentAdapter = wallet?.adapter as MaybeSignMessageAdapter | undefined;
     const getCurrentState = () => ({
-      walletAddress: publicKey?.toBase58() || wallet?.adapter?.publicKey?.toBase58() || null,
-      signMessageFn: wallet?.adapter?.signMessage ? wallet.adapter.signMessage.bind(wallet.adapter) : null,
+      walletAddress: publicKey?.toBase58() || currentAdapter?.publicKey?.toBase58() || null,
+      signMessageFn: currentAdapter?.signMessage ? currentAdapter.signMessage.bind(currentAdapter) : null,
     });
 
     const currentState = getCurrentState();
@@ -155,17 +162,18 @@ export function useAddCurrentWallet() {
 
     await connect();
 
+    const phantomAdapter = phantom.adapter as MaybeSignMessageAdapter;
     return waitForPhantomReady(() => ({
       walletAddress:
-        phantom.adapter.publicKey?.toBase58() ||
+        phantomAdapter.publicKey?.toBase58() ||
         publicKey?.toBase58() ||
-        wallet?.adapter?.publicKey?.toBase58() ||
+        currentAdapter?.publicKey?.toBase58() ||
         null,
       signMessageFn:
-        (phantom.adapter.signMessage
-          ? phantom.adapter.signMessage.bind(phantom.adapter)
-          : wallet?.adapter?.signMessage
-            ? wallet.adapter.signMessage.bind(wallet.adapter)
+        (phantomAdapter.signMessage
+          ? phantomAdapter.signMessage.bind(phantomAdapter)
+          : currentAdapter?.signMessage
+            ? currentAdapter.signMessage.bind(currentAdapter)
             : null),
     }));
   }, [availableWallets, connect, connected, publicKey, select, wallet]);

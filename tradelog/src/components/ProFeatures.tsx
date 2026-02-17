@@ -17,7 +17,8 @@ export default function ProFeatures({ trades }: ProFeaturesProps) {
 
     trades.forEach(trade => {
       const hour = new Date(trade.trade_date).getHours();
-      const value = trade.trade_type === 'buy' ? -trade.total_value : trade.total_value;
+      const tradeTotal = trade.total_value ?? 0;
+      const value = trade.trade_type === 'buy' ? -tradeTotal : tradeTotal;
       hourlyPnl[hour].pnl += value;
       hourlyPnl[hour].trades++;
     });

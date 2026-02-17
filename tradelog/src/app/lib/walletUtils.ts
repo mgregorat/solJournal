@@ -17,7 +17,7 @@ export async function getOrCreateWalletId(userId: number, walletAddress: string)
   }
 
   if (existingWallet) {
-    return existingWallet.id;
+    return Number(existingWallet.id);
   }
 
   // If not found, create it.
@@ -41,7 +41,7 @@ export async function getOrCreateWalletId(userId: number, walletAddress: string)
              console.error('Error re-selecting wallet after race condition:', raceError);
              throw new Error('Could not create or retrieve wallet.');
         }
-        return raceConditionWallet.id;
+        return Number(raceConditionWallet.id);
     }
     console.error('Error inserting wallet:', insertError);
     throw new Error('Could not create wallet.');
@@ -51,5 +51,5 @@ export async function getOrCreateWalletId(userId: number, walletAddress: string)
       throw new Error('Failed to create and retrieve wallet.');
   }
 
-  return newWallet.id;
+  return Number(newWallet.id);
 }

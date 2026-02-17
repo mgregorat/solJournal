@@ -38,7 +38,10 @@ export async function GET(req: NextRequest) {
         throwHttp("internal_error", "Failed to fetch wallets", 500);
       }
 
-      wallets = allWallets || [];
+      wallets = (allWallets || []).map((wallet) => ({
+        id: Number(wallet.id),
+        wallet_address: String(wallet.wallet_address),
+      }));
     }
 
     if (wallets.length === 0) {

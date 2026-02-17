@@ -27,7 +27,7 @@ export default function Breakdown({ trades, setups }: BreakdownProps) {
                 strategyPnl[trade.setup_id] = { buys: 0, sells: 0 };
             }
             strategyUsage[trade.setup_id]++;
-            strategyPnl[trade.setup_id][trade.trade_type === 'buy' ? 'buys' : 'sells'] += trade.total_value;
+            strategyPnl[trade.setup_id][trade.trade_type === 'buy' ? 'buys' : 'sells'] += trade.total_value ?? 0;
         }
     });
 
@@ -47,7 +47,8 @@ export default function Breakdown({ trades, setups }: BreakdownProps) {
     // Emotion stats
     const emotionPnl: { [key: string]: number } = {};
     trades.forEach(trade => {
-        const pnl = trade.trade_type === 'buy' ? -trade.total_value : trade.total_value;
+        const tradeTotal = trade.total_value ?? 0;
+        const pnl = trade.trade_type === 'buy' ? -tradeTotal : tradeTotal;
         if (trade.emotion_tags && trade.emotion_tags.length > 0) {
             trade.emotion_tags.forEach(tag => {
                 if (!emotionPnl[tag]) emotionPnl[tag] = 0;

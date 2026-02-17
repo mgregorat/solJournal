@@ -163,7 +163,24 @@ export async function POST(request: NextRequest) {
             source: 'gmgn.ai',
           };
         })
-        .filter(Boolean);
+        .filter(
+          (
+            row
+          ): row is {
+            user_id: number;
+            wallet_id: number;
+            wallet_address: string;
+            transaction_hash: string;
+            trade_date: Date;
+            trade_type: "buy" | "sell";
+            token_address: string;
+            token_symbol: string;
+            amount: number;
+            price: number;
+            total_value: number;
+            source: string;
+          } => row !== null
+        );
 
       if (recordsToInsert.length === 0) {
         return { message: 'No valid trades found to sync.', synced: 0 };

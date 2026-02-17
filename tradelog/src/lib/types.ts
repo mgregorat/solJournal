@@ -7,6 +7,7 @@ export interface Holding {
   logoURI?: string;
   currentPrice: number;
   currentValueUSD: number;
+  historicalValueUSD?: number;
   avgEntryPrice?: number;
   totalCostBasis?: number;
   unrealizedPnL?: number;
@@ -33,7 +34,28 @@ export interface Trade {
   price_usd: number;
   gas_usd?: number;
   source: string;
+  // Legacy/manual trade fields used by older UI and APIs.
+  trade_type?: 'buy' | 'sell';
+  amount?: number;
+  price?: number;
+  total_value?: number;
+  total_value_usd?: number;
+  notes?: string;
+  emotion_tags?: string[];
+  setup_id?: number | null;
   raw_data?: any;
+}
+
+export interface Setup {
+  id: number;
+  name: string;
+}
+
+export interface Metrics {
+  walletValue: number;
+  allTimePnl: number;
+  dailyPnl: number;
+  dailyPnlPercentage: number;
 }
 
 export interface JournalEvent {

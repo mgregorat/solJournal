@@ -14,7 +14,7 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import ReactMarkdown from 'react-markdown';
-import { Star, ChevronLeft, ChevronRight, Eye, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, addMonths, subMonths, isSameDay } from 'date-fns';
 import { JournalEvent, JournalPageProps, User } from '@/lib/types';
 import { usePrivy } from '@privy-io/react-auth';
@@ -26,6 +26,8 @@ import { JournalEntryModal } from '@/components/JournalEntryModal';
 import { cachedFetch } from '@/lib/cachedFetch';
 import { invalidateCache } from '@/lib/cache';
 import { authedFetchClient, parseApiResponse } from '@/lib/authedFetch';
+import { useJournalAiAnalysis } from '@/app/hooks/useJournalAiAnalysis';
+import { AiAnalysisPanel } from '@/components/AiAnalysisPanel';
 
 const isCuratedTrade = (trade: Partial<JournalEvent>) => !!trade.is_journaled || !!trade.is_flagged;
 const isJournalCompleted = (trade: Partial<JournalEvent>) => !!trade.is_journaled;
@@ -430,8 +432,8 @@ export const JournalPage = ({
 }: JournalPageProps) => {
   const [journalEvents, setJournalEvents] = useState<JournalEvent[]>(Array.isArray(initialJournalEvents) ? initialJournalEvents : []);
   const [allTradeEvents, setAllTradeEvents] = useState<JournalEvent[]>(Array.isArray(initialJournalEvents) ? initialJournalEvents : []);
-  const [dbUser, setDbUser] = useState<User | undefined>(propDbUser);
-  const { user: privyUser, authenticated, getAccessToken } = usePrivy();
+  const [dbUser] = useState<User | undefined>(propDbUser);
+  const { getAccessToken } = usePrivy();
   const getBearerToken = useCallback(async () => (await getAccessToken?.()) || null, [getAccessToken]);
   const router = useRouter();
   const pathname = usePathname();
@@ -449,7 +451,16 @@ export const JournalPage = ({
   const [activeTab, setActiveTab] = useState("journaled");
   const [hideJournaled, setHideJournaled] = useState(false);
   const [isToJournalOpen, setIsToJournalOpen] = useState(true);
+  const [isAIAnalysisOpen, setIsAIAnalysisOpen] = useState(true);
   const [snoozedTxHashes, setSnoozedTxHashes] = useState<Set<string>>(new Set());
+  const [analysisUpdatedAt, setAnalysisUpdatedAt] = useState<Date | null>(null);
+  const {
+    loading: isAnalyzing,
+    analysis: aiAnalysis,
+    metrics: aiMetrics,
+    error: aiAnalysisError,
+    runAnalysis,
+  } = useJournalAiAnalysis(getBearerToken);
 
   const [viewingTradeHistory, setViewingTradeHistory] = useState<JournalEvent[] | null>(null);
   const openTxParam = searchParams.get("openTx");
@@ -476,6 +487,19 @@ export const JournalPage = ({
   const journaledTrades = useMemo(
     () => journalingEligibleTrades.filter(isJournalCompleted),
     [journalingEligibleTrades]
+  );
+
+  const eligibleJournaledTradesForAI = useMemo(
+    () =>
+      journaledTrades.filter((trade) => {
+        if (trade.status !== 'CLOSED') return false;
+        if (!trade.is_journaled) return false;
+        if (typeof trade.realized_pnl_usd !== 'number') return false;
+        const openedAt = trade.journal_updated_at || trade.date;
+        if (!openedAt || !trade.date) return false;
+        return Number.isFinite(new Date(openedAt).getTime()) && Number.isFinite(new Date(trade.date).getTime());
+      }),
+    [journaledTrades]
   );
 
   const toJournalTrades = useMemo(() => {
@@ -880,12 +904,13 @@ export const JournalPage = ({
 
   const handleDeleteJournal = async () => {
     if (!viewingEvent) return;
+    const txHash = viewingEvent.transaction_hash || viewingEvent.id;
 
     try {
       const response = await authedFetchClient(getBearerToken, '/api/journal', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tx_hash: viewingEvent.id }),
+        body: JSON.stringify({ tx_hash: txHash }),
       });
 
       if (!response.ok) {
@@ -940,6 +965,14 @@ export const JournalPage = ({
       setJournalEvents(prev => prev.map(e => e.id === trade.id ? { ...e, is_flagged: !newFlaggedState } : e));
     }
   };
+
+  const handleRunAnalysis = useCallback(async () => {
+    const success = await runAnalysis(eligibleJournaledTradesForAI, selectedWalletId);
+    if (success) {
+      setAnalysisUpdatedAt(new Date());
+    }
+    return success;
+  }, [eligibleJournaledTradesForAI, runAnalysis, selectedWalletId]);
 
     return (
     <div className="container mx-auto py-6">
@@ -1077,22 +1110,36 @@ export const JournalPage = ({
           )}
         </div>
       ) : (
-        groupedJournaledEvents.length === 0 ? (
-          <div className="mt-6 rounded-lg border border-border bg-card p-8 text-center text-muted-foreground">
-            You haven&apos;t journaled any trades yet. Use the Trades tab to add trades to your journal.
+        <div className="mt-6 space-y-4">
+          <AiAnalysisPanel
+            loading={isAnalyzing}
+            analysis={aiAnalysis}
+            metrics={aiMetrics}
+            error={aiAnalysisError}
+            eligibleTradesCount={eligibleJournaledTradesForAI.length}
+            isOpen={isAIAnalysisOpen}
+            onToggleOpen={() => setIsAIAnalysisOpen((prev) => !prev)}
+            onRunAnalysis={handleRunAnalysis}
+            lastUpdatedAt={analysisUpdatedAt}
+          />
+
+          {groupedJournaledEvents.length === 0 ? (
+            <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground">
+              You haven&apos;t journaled any trades yet. Use the Trades tab to add trades to your journal.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {groupedJournaledEvents.map((tradeGroup) => (
+                <GroupedJournalCard
+                  key={tradeGroup[0].token_address}
+                  tradeGroup={tradeGroup}
+                  onSelect={() => setViewingTradeHistory(tradeGroup)}
+                  onJournalClick={(e) => handleJournalClick(e, tradeGroup)}
+                />
+              ))}
+            </div>
+          )}
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-            {groupedJournaledEvents.map((tradeGroup) => (
-              <GroupedJournalCard
-                key={tradeGroup[0].token_address}
-                tradeGroup={tradeGroup}
-                onSelect={() => setViewingTradeHistory(tradeGroup)}
-                onJournalClick={(e) => handleJournalClick(e, tradeGroup)}
-              />
-            ))}
-          </div>
-        )
       )}
 
       <TradeHistoryModal

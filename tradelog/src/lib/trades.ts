@@ -18,7 +18,7 @@ export async function getTrades(walletAddress: string): Promise<Trade[]> {
             throw new Error(error.message);
         }
 
-        return trades as Trade[] || [];
+        return (trades as unknown as Trade[]) || [];
     } catch (error: any) {
         console.error("Caught error in getTrades:", error);
         throw error;

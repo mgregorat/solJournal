@@ -22,7 +22,7 @@ export default function PnLSummary({ trades }: PnLSummaryProps) {
 
     for (const trade of trades) {
       const tradeDate = new Date(trade.trade_date);
-      const value = trade.total_value;
+      const value = trade.total_value ?? 0;
 
       if (trade.trade_type === 'buy') {
         lifetimeBuy += value;

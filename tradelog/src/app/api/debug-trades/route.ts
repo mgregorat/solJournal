@@ -6,7 +6,17 @@ import { throwHttp, withTiming } from '@/app/lib/http';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
-  return withTiming(request, async () => {
+  return withTiming<{
+    message?: string;
+    count?: number;
+    trades?: Record<string, unknown>[] | null;
+    error?: unknown;
+    targetUserId?: string;
+    tradeCount?: number;
+    walletCount?: number;
+    wallets?: Record<string, unknown>[] | null;
+    tradesSample?: Record<string, unknown>[] | null;
+  }>(request, async () => {
     requireInternalRequest(request);
     const { searchParams } = new URL(request.url);
     const targetUserId = searchParams.get('targetUserId');

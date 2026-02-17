@@ -29,7 +29,8 @@ export default function PnlChart({ trades }: PnlChartProps) {
       }
       
       if (!data[key]) data[key] = 0;
-      const value = trade.trade_type === 'buy' ? -trade.total_value : trade.total_value;
+      const tradeTotal = trade.total_value ?? 0;
+      const value = trade.trade_type === 'buy' ? -tradeTotal : tradeTotal;
       data[key] += value;
     });
 

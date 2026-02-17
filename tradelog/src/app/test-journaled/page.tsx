@@ -3,11 +3,12 @@
 import { useState, useEffect } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { JournalEvent } from '@/lib/types';
 
 export default function TestJournaledTrades() {
-  const [journaledTrades, setJournaledTrades] = useState([]);
+  const [journaledTrades, setJournaledTrades] = useState<JournalEvent[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const { user, authenticated } = usePrivy();
   const { publicKey } = useWallet();
 
@@ -48,7 +49,7 @@ export default function TestJournaledTrades() {
 
     } catch (err) {
       console.error('Error fetching journaled trades:', err);
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Failed to fetch journaled trades');
     } finally {
       setLoading(false);
     }

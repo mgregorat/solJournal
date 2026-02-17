@@ -4,25 +4,10 @@ import { ExternalLink, TrendingUp, TrendingDown, Grid3X3, List, RefreshCw, Arrow
 import { Button } from './ui/button';
 import { PortfolioPieChart } from './PortfolioPieChart';
 import { toast } from 'sonner';
-
-interface TokenHolding {
-  mint: string;
-  amount: number;
-  decimals: number;
-  symbol?: string;
-  name?: string;
-  logoURI?: string;
-  currentPrice?: number;
-  currentValueUSD?: number;
-  avgEntryPrice?: number;
-  totalCostBasis?: number;
-  unrealizedPnL?: number;
-  pnlPercentage?: number;
-  isNativeSOL?: boolean;
-}
+import { Holding } from '@/lib/types';
 
 interface HoldingsPageProps {
-    holdings: TokenHolding[];
+    holdings: Holding[];
     isLoading: boolean;
     onRefresh: () => Promise<boolean | void>;
     walletAddress?: string;
