@@ -6,7 +6,31 @@ import { throwHttp, withTiming } from '@/app/lib/http';
 export async function PATCH(req: NextRequest) {
   return withTiming(req, async () => {
     const dbUser = await requireUser(req);
-    const { tx_hash, is_flagged, is_journaled, notes, walletId } = await req.json();
+    const {
+      tx_hash,
+      is_flagged,
+      is_journaled,
+      notes,
+      walletId,
+      tags,
+      what_went_well,
+      what_went_wrong,
+      what_will_i_do_differently,
+      setup_tag,
+      entry_reason,
+      entry_delay_seconds,
+      position_size_usd,
+      position_size_sol,
+      wallet_equity_usd_at_entry,
+      risk_pct_of_wallet,
+      mae_percent,
+      mfe_percent,
+      time_of_day_bucket,
+      exit_plan,
+      did_follow_plan,
+      stop_type,
+      take_profit_rules,
+    } = await req.json();
 
     if (!tx_hash || !walletId) {
       throwHttp("bad_request", "Missing walletId or transaction hash", 400);
@@ -34,14 +58,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     // Step 2: Prepare the record for upserting.
-    const record: {
-        tx_hash: any;
-        user_id: any;
-        wallet_id: any;
-        is_flagged?: any;
-        is_journaled?: any;
-        notes?: any;
-    } = {
+    const record: Record<string, unknown> = {
         tx_hash: tx_hash,
         user_id: dbUser.id,
         wallet_id: ownedWallet.id,
@@ -55,6 +72,60 @@ export async function PATCH(req: NextRequest) {
     }
     if (notes !== undefined) {
         record.notes = notes;
+    }
+    if (tags !== undefined) {
+      record.tags = tags;
+    }
+    if (what_went_well !== undefined) {
+      record.what_went_well = what_went_well;
+    }
+    if (what_went_wrong !== undefined) {
+      record.what_went_wrong = what_went_wrong;
+    }
+    if (what_will_i_do_differently !== undefined) {
+      record.what_will_i_do_differently = what_will_i_do_differently;
+    }
+    if (setup_tag !== undefined) {
+      record.setup_tag = setup_tag;
+    }
+    if (entry_reason !== undefined) {
+      record.entry_reason = entry_reason;
+    }
+    if (entry_delay_seconds !== undefined) {
+      record.entry_delay_seconds = entry_delay_seconds;
+    }
+    if (position_size_usd !== undefined) {
+      record.position_size_usd = position_size_usd;
+    }
+    if (position_size_sol !== undefined) {
+      record.position_size_sol = position_size_sol;
+    }
+    if (wallet_equity_usd_at_entry !== undefined) {
+      record.wallet_equity_usd_at_entry = wallet_equity_usd_at_entry;
+    }
+    if (risk_pct_of_wallet !== undefined) {
+      record.risk_pct_of_wallet = risk_pct_of_wallet;
+    }
+    if (mae_percent !== undefined) {
+      record.mae_percent = mae_percent;
+    }
+    if (mfe_percent !== undefined) {
+      record.mfe_percent = mfe_percent;
+    }
+    if (time_of_day_bucket !== undefined) {
+      record.time_of_day_bucket = time_of_day_bucket;
+    }
+    if (exit_plan !== undefined) {
+      record.exit_plan = exit_plan;
+    }
+    if (did_follow_plan !== undefined) {
+      record.did_follow_plan = did_follow_plan;
+    }
+    if (stop_type !== undefined) {
+      record.stop_type = stop_type;
+    }
+    if (take_profit_rules !== undefined) {
+      record.take_profit_rules = take_profit_rules;
     }
 
     // Step 3: Upsert manually (no unique constraint available for ON CONFLICT)

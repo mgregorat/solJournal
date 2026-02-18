@@ -21,10 +21,11 @@ import {
   TradesPageData,
   fetchTradesPage,
 } from "@/lib/tradesQuery";
-import { TradeTable } from "@/components/trades/TradeTable";
-import { TradeDrawer } from "@/components/trades/TradeDrawer";
 import { getCache, getCacheWithMeta, invalidateCache } from "@/lib/cache";
 import { FirstWalletEmptyState } from "@/components/FirstWalletEmptyState";
+import { aggregateTradesByToken, type AggregatedTokenRow } from "@/lib/tradeAggregation";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 
 type SortOptionValue =
   | "trade_date_desc"
@@ -64,8 +65,7 @@ export const TradesPage = ({ dbUser }: { dbUser: User }) => {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTrade, setSelectedTrade] = useState<TradeListItem | null>(null);
-  const [isUpdatingJournaled, setIsUpdatingJournaled] = useState(false);
+  const [selectedToken, setSelectedToken] = useState<string | null>(null);
 
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -292,36 +292,36 @@ export const TradesPage = ({ dbUser }: { dbUser: User }) => {
     setSortDir(selected.dir);
   };
 
-  const handleToggleJournaled = useCallback(
-    async (trade: TradeListItem) => {
-      if (!trade.wallet_id) return;
-      setIsUpdatingJournaled(true);
-      try {
-        await api.patch("/api/journal/flag", {
-          tx_hash: trade.transaction_hash,
-          walletId: trade.wallet_id,
-          is_journaled: !trade.is_journaled,
-        });
-        setRows((prev) =>
-          prev.map((row) =>
-            row.transaction_hash === trade.transaction_hash
-              ? { ...row, is_journaled: !row.is_journaled }
-              : row
-          )
-        );
-        setSelectedTrade((prev) =>
-          prev && prev.transaction_hash === trade.transaction_hash
-            ? { ...prev, is_journaled: !prev.is_journaled }
-            : prev
-        );
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to update journal status");
-      } finally {
-        setIsUpdatingJournaled(false);
+  const aggregatedRows = useMemo(() => {
+    const aggregated = aggregateTradesByToken(rows);
+    const sorted = [...aggregated];
+
+    sorted.sort((a, b) => {
+      const direction = sortDir === "asc" ? 1 : -1;
+      if (sortField === "trade_date") {
+        const timeA = new Date(a.last_trade_at).getTime();
+        const timeB = new Date(b.last_trade_at).getTime();
+        return (timeA - timeB) * direction;
       }
-    },
-    [api]
-  );
+      if (sortField === "realized_pnl_usd") {
+        return (a.realized_pnl_usd - b.realized_pnl_usd) * direction;
+      }
+      const grossA = a.total_buy_usd + a.total_sell_usd;
+      const grossB = b.total_buy_usd + b.total_sell_usd;
+      return (grossA - grossB) * direction;
+    });
+
+    return sorted;
+  }, [rows, sortDir, sortField]);
+
+  const selectedTokenTrades = useMemo(() => {
+    if (!selectedToken) return [];
+    return rows
+      .filter((row) => row.token_symbol.toUpperCase() === selectedToken)
+      .sort(
+        (a, b) => new Date(b.trade_date).getTime() - new Date(a.trade_date).getTime()
+      );
+  }, [rows, selectedToken]);
 
   return (
     <div className="space-y-6">
@@ -394,36 +394,160 @@ export const TradesPage = ({ dbUser }: { dbUser: User }) => {
       )}
 
       {wallets.length > 0 && (
-      <Card>
-        <CardHeader>
-          <CardTitle>Trade History</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <TradeTable
-            rows={rows}
-            showWalletColumn={showWalletColumn}
-            walletLabelById={walletLabelById}
-            onRowClick={setSelectedTrade}
-            isLoading={isLoadingInitial}
-            isError={Boolean(error)}
-            errorMessage={error}
-            hasMore={hasMore}
-            isLoadingMore={isLoadingMore}
-            onLoadMore={handleLoadMore}
-          />
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Trade History</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {isLoadingInitial ? (
+              <div className="text-sm text-muted-foreground">Loading trades...</div>
+            ) : error ? (
+              <div className="text-sm text-red-400">{error}</div>
+            ) : aggregatedRows.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No trades found.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left text-muted-foreground">
+                    <tr className="border-b border-border">
+                      <th className="py-2 pr-3">Token</th>
+                      <th className="py-2 pr-3"># Trades</th>
+                      <th className="py-2 pr-3">Buys (USD)</th>
+                      <th className="py-2 pr-3">Sells (USD)</th>
+                      <th className="py-2 pr-3">Realized P&L (USD)</th>
+                      <th className="py-2 pr-3">Net Position (qty)</th>
+                      <th className="py-2 pr-3">Avg Cost (USD)</th>
+                      <th className="py-2 pr-0">Last Trade</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {aggregatedRows.map((row: AggregatedTokenRow) => (
+                      <tr
+                        key={row.token_symbol_key}
+                        className="border-b border-border/60 cursor-pointer hover:bg-muted/20"
+                        onClick={() => setSelectedToken(row.token_symbol_key)}
+                      >
+                        <td className="py-2 pr-3 font-medium">
+                          <div className="inline-flex items-center gap-2">
+                            <span>{row.token_symbol}</span>
+                            {row.has_invalid_sell_sequence && (
+                              <Badge
+                                variant="secondary"
+                                title="Sell before buy in loaded data"
+                              >
+                                Data issue
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3">{row.trade_count}</td>
+                        <td className="py-2 pr-3">${row.total_buy_usd.toFixed(2)}</td>
+                        <td className="py-2 pr-3">${row.total_sell_usd.toFixed(2)}</td>
+                        <td
+                          className={`py-2 pr-3 font-medium ${
+                            row.realized_pnl_usd > 0
+                              ? "text-green-400"
+                              : row.realized_pnl_usd < 0
+                                ? "text-red-400"
+                                : ""
+                          }`}
+                        >
+                          {row.realized_pnl_usd >= 0 ? "+" : ""}${row.realized_pnl_usd.toFixed(2)}
+                        </td>
+                        <td className="py-2 pr-3">{row.position_qty.toFixed(6)}</td>
+                        <td className="py-2 pr-3">
+                          {row.position_qty > 0 ? `$${row.avg_cost_usd_per_token.toFixed(6)}` : "—"}
+                        </td>
+                        <td className="py-2 pr-0">
+                          {new Date(row.last_trade_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {hasMore && (
+              <div className="pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore}
+                >
+                  {isLoadingMore ? "Loading..." : "Load more"}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
-      <TradeDrawer
-        open={Boolean(selectedTrade)}
-        trade={selectedTrade}
-        onOpenChange={(open) => {
-          if (!open) setSelectedTrade(null);
-        }}
-        onToggleJournaled={handleToggleJournaled}
-        isUpdatingJournaled={isUpdatingJournaled}
-      />
+      <Dialog open={Boolean(selectedToken)} onOpenChange={(open) => !open && setSelectedToken(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{selectedToken ?? "Token"} Transactions</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto overflow-x-auto">
+            {selectedTokenTrades.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No transactions found for this token.</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="text-left text-muted-foreground">
+                  <tr className="border-b border-border">
+                    <th className="py-2 pr-3">Date</th>
+                    <th className="py-2 pr-3">Type</th>
+                    <th className="py-2 pr-3">Amount</th>
+                    <th className="py-2 pr-3">Price</th>
+                    <th className="py-2 pr-3">Total</th>
+                    <th className="py-2 pr-3">Tx</th>
+                    <th className="py-2 pr-0">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedTokenTrades.map((trade) => (
+                    <tr key={trade.id} className="border-b border-border/60">
+                      <td className="py-2 pr-3">{new Date(trade.trade_date).toLocaleString()}</td>
+                      <td className="py-2 pr-3 uppercase">{trade.trade_type}</td>
+                      <td className="py-2 pr-3">{trade.amount.toFixed(6)}</td>
+                      <td className="py-2 pr-3">${trade.price.toFixed(6)}</td>
+                      <td className="py-2 pr-3">${trade.total_value_usd.toFixed(2)}</td>
+                      <td className="py-2 pr-3 font-mono text-xs">
+                        {trade.transaction_hash}
+                      </td>
+                      <td className="py-2 pr-0">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void navigator.clipboard?.writeText(trade.transaction_hash)}
+                          >
+                            Copy Tx
+                          </Button>
+                          <a
+                            href={`https://solscan.io/tx/${trade.transaction_hash}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-400 hover:underline"
+                          >
+                            Open
+                          </a>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedToken(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

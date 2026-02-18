@@ -26,7 +26,7 @@ import { JournalEntryModal } from '@/components/JournalEntryModal';
 import { cachedFetch } from '@/lib/cachedFetch';
 import { invalidateCache } from '@/lib/cache';
 import { authedFetchClient, parseApiResponse } from '@/lib/authedFetch';
-import { useJournalAiAnalysis } from '@/app/hooks/useJournalAiAnalysis';
+import { useJournalAiAnalysis, type AnalysisScope } from '@/app/hooks/useJournalAiAnalysis';
 import { AiAnalysisPanel } from '@/components/AiAnalysisPanel';
 
 const isCuratedTrade = (trade: Partial<JournalEvent>) => !!trade.is_journaled || !!trade.is_flagged;
@@ -454,10 +454,15 @@ export const JournalPage = ({
   const [isAIAnalysisOpen, setIsAIAnalysisOpen] = useState(true);
   const [snoozedTxHashes, setSnoozedTxHashes] = useState<Set<string>>(new Set());
   const [analysisUpdatedAt, setAnalysisUpdatedAt] = useState<Date | null>(null);
+  const [analysisScope, setAnalysisScope] = useState<AnalysisScope>("JOURNALED");
   const {
     loading: isAnalyzing,
-    analysis: aiAnalysis,
+    analysisText: aiAnalysis,
+    analysisStructured: aiAnalysisStructured,
+    model: aiModel,
     metrics: aiMetrics,
+    dataQuality: aiDataQuality,
+    feeSlippageSummary: aiFeeSlippageSummary,
     error: aiAnalysisError,
     runAnalysis,
   } = useJournalAiAnalysis(getBearerToken);
@@ -500,6 +505,18 @@ export const JournalPage = ({
         return Number.isFinite(new Date(openedAt).getTime()) && Number.isFinite(new Date(trade.date).getTime());
       }),
     [journaledTrades]
+  );
+
+  const eligibleClosedTradesForAI = useMemo(
+    () =>
+      journalingEligibleTrades.filter((trade) => {
+        if (trade.status !== 'CLOSED') return false;
+        if (typeof trade.realized_pnl_usd !== 'number') return false;
+        const openedAt = trade.journal_updated_at || trade.date;
+        if (!openedAt || !trade.date) return false;
+        return Number.isFinite(new Date(openedAt).getTime()) && Number.isFinite(new Date(trade.date).getTime());
+      }),
+    [journalingEligibleTrades]
   );
 
   const toJournalTrades = useMemo(() => {
@@ -609,6 +626,20 @@ export const JournalPage = ({
                 what_went_well: journalEntry.what_went_well,
                 what_went_wrong: journalEntry.what_went_wrong,
                 what_will_i_do_differently: journalEntry.what_will_i_do_differently,
+                setup_tag: journalEntry.setup_tag,
+                entry_reason: journalEntry.entry_reason,
+                entry_delay_seconds: journalEntry.entry_delay_seconds,
+                position_size_usd: journalEntry.position_size_usd,
+                position_size_sol: journalEntry.position_size_sol,
+                wallet_equity_usd_at_entry: journalEntry.wallet_equity_usd_at_entry,
+                risk_pct_of_wallet: journalEntry.risk_pct_of_wallet,
+                mae_percent: journalEntry.mae_percent,
+                mfe_percent: journalEntry.mfe_percent,
+                time_of_day_bucket: journalEntry.time_of_day_bucket,
+                exit_plan: journalEntry.exit_plan,
+                did_follow_plan: journalEntry.did_follow_plan,
+                stop_type: journalEntry.stop_type,
+                take_profit_rules: journalEntry.take_profit_rules,
                 is_journaled: true,
                 journal_updated_at: journalEntry.updated_at,
               };
@@ -850,6 +881,20 @@ export const JournalPage = ({
       what_went_well: savedEntry?.what_went_well,
       what_went_wrong: savedEntry?.what_went_wrong,
       what_will_i_do_differently: savedEntry?.what_will_i_do_differently,
+      setup_tag: savedEntry?.setup_tag,
+      entry_reason: savedEntry?.entry_reason,
+      entry_delay_seconds: savedEntry?.entry_delay_seconds,
+      position_size_usd: savedEntry?.position_size_usd,
+      position_size_sol: savedEntry?.position_size_sol,
+      wallet_equity_usd_at_entry: savedEntry?.wallet_equity_usd_at_entry,
+      risk_pct_of_wallet: savedEntry?.risk_pct_of_wallet,
+      mae_percent: savedEntry?.mae_percent,
+      mfe_percent: savedEntry?.mfe_percent,
+      time_of_day_bucket: savedEntry?.time_of_day_bucket,
+      exit_plan: savedEntry?.exit_plan,
+      did_follow_plan: savedEntry?.did_follow_plan,
+      stop_type: savedEntry?.stop_type,
+      take_profit_rules: savedEntry?.take_profit_rules,
       journal_entry_id: savedEntry?.id,
       is_journaled: true,
       journal_updated_at: savedEntry?.updated_at,
@@ -967,12 +1012,16 @@ export const JournalPage = ({
   };
 
   const handleRunAnalysis = useCallback(async () => {
-    const success = await runAnalysis(eligibleJournaledTradesForAI, selectedWalletId);
+    const sourceTrades =
+      analysisScope === "JOURNALED"
+        ? eligibleJournaledTradesForAI
+        : eligibleClosedTradesForAI;
+    const success = await runAnalysis(sourceTrades, selectedWalletId, analysisScope);
     if (success) {
       setAnalysisUpdatedAt(new Date());
     }
     return success;
-  }, [eligibleJournaledTradesForAI, runAnalysis, selectedWalletId]);
+  }, [analysisScope, eligibleClosedTradesForAI, eligibleJournaledTradesForAI, runAnalysis, selectedWalletId]);
 
     return (
     <div className="container mx-auto py-6">
@@ -1114,9 +1163,17 @@ export const JournalPage = ({
           <AiAnalysisPanel
             loading={isAnalyzing}
             analysis={aiAnalysis}
+            structured={aiAnalysisStructured}
+            model={aiModel}
             metrics={aiMetrics}
             error={aiAnalysisError}
             eligibleTradesCount={eligibleJournaledTradesForAI.length}
+            journaledEligibleCount={eligibleJournaledTradesForAI.length}
+            allClosedEligibleCount={eligibleClosedTradesForAI.length}
+            analysisScope={analysisScope}
+            onAnalysisScopeChange={setAnalysisScope}
+            dataQuality={aiDataQuality}
+            feeSlippageSummary={aiFeeSlippageSummary}
             isOpen={isAIAnalysisOpen}
             onToggleOpen={() => setIsAIAnalysisOpen((prev) => !prev)}
             onRunAnalysis={handleRunAnalysis}
@@ -1186,6 +1243,20 @@ export const JournalPage = ({
             what_went_well: selectedEvent.what_went_well,
             what_went_wrong: selectedEvent.what_went_wrong,
             what_will_i_do_differently: selectedEvent.what_will_i_do_differently,
+            setup_tag: selectedEvent.setup_tag,
+            entry_reason: selectedEvent.entry_reason,
+            entry_delay_seconds: selectedEvent.entry_delay_seconds,
+            position_size_usd: selectedEvent.position_size_usd,
+            position_size_sol: selectedEvent.position_size_sol,
+            wallet_equity_usd_at_entry: selectedEvent.wallet_equity_usd_at_entry,
+            risk_pct_of_wallet: selectedEvent.risk_pct_of_wallet,
+            mae_percent: selectedEvent.mae_percent,
+            mfe_percent: selectedEvent.mfe_percent,
+            time_of_day_bucket: selectedEvent.time_of_day_bucket,
+            exit_plan: selectedEvent.exit_plan,
+            did_follow_plan: selectedEvent.did_follow_plan,
+            stop_type: selectedEvent.stop_type,
+            take_profit_rules: selectedEvent.take_profit_rules,
             is_flagged: selectedEvent.is_flagged,
           }}
           tokenSymbol={selectedEvent.token_symbol}

@@ -34,6 +34,20 @@ interface JournalEvent {
   what_went_well?: string;
   what_went_wrong?: string;
   what_will_i_do_differently?: string;
+  setup_tag?: string;
+  entry_reason?: string;
+  entry_delay_seconds?: number;
+  position_size_usd?: number;
+  position_size_sol?: number;
+  wallet_equity_usd_at_entry?: number;
+  risk_pct_of_wallet?: number;
+  mae_percent?: number;
+  mfe_percent?: number;
+  time_of_day_bucket?: string;
+  exit_plan?: string;
+  did_follow_plan?: boolean;
+  stop_type?: string;
+  take_profit_rules?: string;
   is_journaled?: boolean;
 }
 
@@ -59,6 +73,20 @@ interface EnrichedTrade {
     what_went_well?: string;
     what_went_wrong?: string;
     what_will_i_do_differently?: string;
+    setup_tag?: string;
+    entry_reason?: string;
+    entry_delay_seconds?: number;
+    position_size_usd?: number;
+    position_size_sol?: number;
+    wallet_equity_usd_at_entry?: number;
+    risk_pct_of_wallet?: number;
+    mae_percent?: number;
+    mfe_percent?: number;
+    time_of_day_bucket?: string;
+    exit_plan?: string;
+    did_follow_plan?: boolean;
+    stop_type?: string;
+    take_profit_rules?: string;
     is_journaled?: boolean;
 }
 
@@ -139,6 +167,20 @@ export async function GET(request: NextRequest) {
                 what_went_well: journalEntry?.what_went_well,
                 what_went_wrong: journalEntry?.what_went_wrong,
                 what_will_i_do_differently: journalEntry?.what_will_i_do_differently,
+                setup_tag: journalEntry?.setup_tag,
+                entry_reason: journalEntry?.entry_reason,
+                entry_delay_seconds: journalEntry?.entry_delay_seconds,
+                position_size_usd: journalEntry?.position_size_usd,
+                position_size_sol: journalEntry?.position_size_sol,
+                wallet_equity_usd_at_entry: journalEntry?.wallet_equity_usd_at_entry,
+                risk_pct_of_wallet: journalEntry?.risk_pct_of_wallet,
+                mae_percent: journalEntry?.mae_percent,
+                mfe_percent: journalEntry?.mfe_percent,
+                time_of_day_bucket: journalEntry?.time_of_day_bucket,
+                exit_plan: journalEntry?.exit_plan,
+                did_follow_plan: journalEntry?.did_follow_plan,
+                stop_type: journalEntry?.stop_type,
+                take_profit_rules: journalEntry?.take_profit_rules,
                 is_journaled: false // Default to false
             };
 
@@ -216,6 +258,20 @@ export async function GET(request: NextRequest) {
                         what_went_well: trade.what_went_well,
                         what_went_wrong: trade.what_went_wrong,
                         what_will_i_do_differently: trade.what_will_i_do_differently,
+                        setup_tag: trade.setup_tag,
+                        entry_reason: trade.entry_reason,
+                        entry_delay_seconds: trade.entry_delay_seconds,
+                        position_size_usd: trade.position_size_usd,
+                        position_size_sol: trade.position_size_sol,
+                        wallet_equity_usd_at_entry: trade.wallet_equity_usd_at_entry,
+                        risk_pct_of_wallet: trade.risk_pct_of_wallet,
+                        mae_percent: trade.mae_percent,
+                        mfe_percent: trade.mfe_percent,
+                        time_of_day_bucket: trade.time_of_day_bucket,
+                        exit_plan: trade.exit_plan,
+                        did_follow_plan: trade.did_follow_plan,
+                        stop_type: trade.stop_type,
+                        take_profit_rules: trade.take_profit_rules,
                         is_journaled: trade.is_journaled,
                     };
 
@@ -336,6 +392,20 @@ export async function GET(request: NextRequest) {
                     what_went_well: trade.what_went_well,
                     what_went_wrong: trade.what_went_wrong,
                     what_will_i_do_differently: trade.what_will_i_do_differently,
+                    setup_tag: trade.setup_tag,
+                    entry_reason: trade.entry_reason,
+                    entry_delay_seconds: trade.entry_delay_seconds,
+                    position_size_usd: trade.position_size_usd,
+                    position_size_sol: trade.position_size_sol,
+                    wallet_equity_usd_at_entry: trade.wallet_equity_usd_at_entry,
+                    risk_pct_of_wallet: trade.risk_pct_of_wallet,
+                    mae_percent: trade.mae_percent,
+                    mfe_percent: trade.mfe_percent,
+                    time_of_day_bucket: trade.time_of_day_bucket,
+                    exit_plan: trade.exit_plan,
+                    did_follow_plan: trade.did_follow_plan,
+                    stop_type: trade.stop_type,
+                    take_profit_rules: trade.take_profit_rules,
                     is_journaled: trade.is_journaled,
                 };
             });
